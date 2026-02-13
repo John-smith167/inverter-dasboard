@@ -1,0 +1,3 @@
+([('SK_INVERTX_TRADERS',
+   '/Users/raosaad/Documents/inverter dasboard/dist/SK_INVERTX_TRADERS',
+   'EXECUTABLE')],)

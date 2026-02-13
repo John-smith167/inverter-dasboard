@@ -1,0 +1,9 @@
+streamlit
+pandas
+plotly
+fpdf
+qrcode
+pillow
+watchdog
+pyinstaller
+xlsxwriter
