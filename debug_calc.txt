@@ -1,0 +1,88 @@
+
+--- CALL 2026-02-15 17:39:31.937436 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:39:34.416890 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:39:47.199285 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:41:24.569349 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:41:29.911221 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:41:32.436170 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:42:29.929486 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:42:31.153665 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:43:19.382378 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:43:22.067956 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'
+
+--- CALL 2026-02-15 17:43:24.108729 ---
+Key provided: sales_editor_Sale_Normal
+❌ ERROR: 'dict' object has no attribute 'shape'
+Traceback (most recent call last):
+  File "/Users/raosaad/Documents/inverter dasboard/main.py", line 1725, in update_sales_grid
+    f.write(f"DF Shape: {df.shape}\n")
+AttributeError: 'dict' object has no attribute 'shape'

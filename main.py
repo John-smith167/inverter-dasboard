@@ -518,35 +518,34 @@ def num_to_words(n):
     except:
         return ""
 
-def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freight, misc, grand_total, previous_balance, outstanding_balance, cash_received=0.0, is_purchase=False):
-    pdf = FPDF()
+def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freight, misc, grand_total, cash_received, previous_balance=0.0, outstanding_balance=0.0, is_purchase=False, is_receipt=False, is_batch=False):
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
-    # Determine if this is a Payment Receipt (Cash only, no billable items)
-    is_receipt = (grand_total == 0 and cash_received > 0)
-    
-    # --- HEADER ---
+    # --- LOGO & HEADER ---
     pdf.set_font("Arial", 'B', 20)
+    if os.path.exists("assets/logo.png"):
+        pdf.image("assets/logo.png", 10, 8, 33)
+    
     pdf.set_y(10)
-    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
     pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
-    if os.path.exists("assets/logo.png"):
-        pdf.image("assets/logo.png", 10, 8, 30)
-
     pdf.ln(5)
+    
+    # Title
     pdf.set_font("Arial", 'B', 16)
+    title = "Sales Invoice"
+    if is_purchase: title = "PURCHASE ORDER"
+    elif is_receipt: title = "PAYMENT RECEIPT"
+    elif is_batch: title = "Sales Invoice (Batch)"
     
-    if is_purchase:
-        title_text = "PURCHASE INVOICE / RECEIVING"
-    else:
-        title_text = "Payment Receipt" if is_receipt else "Sales Invoice"
-        
-    pdf.cell(0, 8, txt=title_text, ln=True, align='C')
+    pdf.cell(0, 10, txt=title, ln=True, align='C')
     
+    pdf.set_line_width(0.5)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(5)
 
@@ -554,21 +553,28 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     
     # Invoice No & Date
     pdf.set_font("Arial", 'B', 10)
-    if is_purchase:
-        pdf.cell(25, 6, "Purchase #:", 0, 0)
-    else:
-        pdf.cell(20, 6, "Ref #:" if is_receipt else "Invoice #:", 0, 0)
+    pdf.cell(20, 6, "Invoice #:", 0, 0)
         
     pdf.set_font("Arial", size=10)
     pdf.cell(40, 6, str(invoice_no), 0, 0)
+    
+    # Underline Invoice info
+    y_line = pdf.get_y() + 6
+    pdf.line(10, y_line, 70, y_line)
     
     pdf.set_x(140)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(20, 6, "Date :", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(30, 6, str(date_val), 0, 1)
+    # If Batch, maybe show Range? Or just Today
+    pdf.cell(30, 6, str(date_val), 0, 1) # ln=1 here moves Y down
     
-    pdf.line(10, pdf.get_y()+1, 200, pdf.get_y()+1)
+    # Underline Date info
+    # Note: cell moved Y down, so we normally use previous Y. 
+    # But ln=1 sets Y to next line. 
+    # Using hardcoded y_line from above since they are on same row.
+    pdf.line(140, y_line, 190, y_line)
+    
     pdf.ln(3)
 
     # Customer/Supplier Details
@@ -578,47 +584,153 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.set_font("Arial", size=10)
     pdf.cell(100, 6, str(customer), 0, 1)
     
+    # Underline Customer Name
+    # Customer name starts after label (width 30). X roughly 40 (10 margin + 30).
+    y_cust_line = pdf.get_y() 
+    pdf.line(40, y_cust_line, 140, y_cust_line)
+    
     pdf.ln(5)
 
     # --- TABLE HEADER ---
-    if not is_receipt or (is_purchase and not items_df.empty):
-        pdf.set_fill_color(240, 240, 240)
-        pdf.set_font("Arial", 'B', 10)
+    # --- TABLE HEADER ---
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_fill_color(240, 240, 240)
+    
+    if is_receipt:
+        # Receipt View
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, "PAYMENT RECEIPT", 0, 1, 'C')
+        pdf.ln(5)
         
+        pdf.set_font("Arial", '', 10)
+        pdf.cell(100, 8, f"Receipt #: {invoice_no}", 0, 0)
+        pdf.cell(90, 8, f"Date: {str(date_val)}", 0, 1, 'R')
+        pdf.cell(100, 8, f"Customer: {customer}", 0, 1)
+        pdf.ln(5)
+        
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(15, 8, "S#", 1, 0, 'C', 1)
+        pdf.cell(115, 8, "Description", 1, 0, 'C', 1)
+        pdf.cell(60, 8, "Amount", 1, 1, 'C', 1)
+
+    elif is_batch:
+        # BATCH / MULTI-DATE HEADER
+        pdf.cell(25, 8, "Date", 1, 0, 'C', 1)
+        pdf.cell(70, 8, "Item Description", 1, 0, 'L', 1)
+        pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
+        pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
+        pdf.cell(20, 8, "Discount", 1, 0, 'C', 1)
+        pdf.cell(35, 8, "Total", 1, 1, 'C', 1)
+        
+    else:
+        # STANDARD HEADER
         pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
         pdf.cell(80, 8, "Item Description", 1, 0, 'C', 1)
         pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
         pdf.cell(25, 8, "Rate/Cost", 1, 0, 'C', 1)
-        pdf.cell(20, 8, "Has Ret?", 1, 0, 'C', 1) # Simplified for Purchase
+        pdf.cell(20, 8, "Discount", 1, 0, 'C', 1)
         pdf.cell(40, 8, "Amount", 1, 1, 'C', 1)
+        
+    # --- TABLE ROWS ---
+    pdf.set_font("Arial", '', 10)
+    rows_printed = 0
+    
+    if is_receipt:
+        pdf.cell(15, 8, "1", 1, 0, 'C')
+        pdf.cell(115, 8, "Cash Received", 1, 0, 'L')
+        pdf.cell(60, 8, f"{cash_received:,.0f}", 1, 1, 'R')
+        rows_printed = 1
+        
+    elif is_batch:
+        # BATCH ROWS
+        # items_df might be DataFrame or list of dicts. Handle both.
+        # But in main.py logic, it's usually passed as items_df (DataFrame) or valid_items (DataFrame)
+        
+        # Sort by date if possible
+        if hasattr(items_df, 'sort_values') and 'Date' in items_df.columns:
+            items_df = items_df.sort_values(by='Date')
+            
+        for _, row in items_df.iterrows():
+            txn_type = row.get('Type', 'Sale / Item')
+            if txn_type == "Cash Received":
+                continue 
+                
+            date_val_row = row.get('Date', '')
+            date_str = str(date_val_row)
+            if hasattr(date_val_row, 'strftime'):
+                date_str = date_val_row.strftime('%Y-%m-%d')
 
-        # --- TABLE ROWS ---
-        pdf.set_font("Arial", size=9)
+            name = str(row.get('Item Name', ''))
+            qty = row.get('Qty', 0)
+            rate = row.get('Rate', 0)
+            disc = row.get('Discount', 0)
+            total_val = row.get('Total', 0)
+            
+            if txn_type == "Return":
+                name = f"[RET] {name}"
+                
+            pdf.cell(25, 8, date_str, 1, 0, 'C')
+            pdf.cell(70, 8, name, 1, 0, 'L')
+            
+            # If pure calc row
+            pdf.cell(15, 8, str(qty), 1, 0, 'C')
+            pdf.cell(25, 8, f"{rate:,.0f}", 1, 0, 'R')
+            
+            d_str = f"{disc:,.0f}" if disc > 0 else "-"
+            pdf.cell(20, 8, d_str, 1, 0, 'C')
+            
+            pdf.cell(35, 8, f"{total_val:,.0f}", 1, 1, 'R')
+            rows_printed += 1
+
+    else:
+        # STANDARD ROWS
         idx = 1
         for _, row in items_df.iterrows():
             item_name = str(row['Item Name'])[:45]
             qty = float(row['Qty'])
             ret = float(row.get('Return Qty', 0))
-            net_qty = qty - ret
-            rate = float(row['Rate'])
+            rate = float(row.get('Rate', 0))
             
             # Purchase usually doesn't have discount column in UI, but if it does:
             discount = float(row.get('Discount', 0)) 
-            total = float(row['Total'])
+            
+            # Check for manually entered Total (if available) or calculate
+            if 'Total' in row and pd.notnull(row['Total']):
+                 total = float(row['Total'])
+            else:
+                 total = ((qty - ret) * rate) - discount
             
             pdf.cell(10, 8, str(idx), 1, 0, 'C')
             pdf.cell(80, 8, item_name, 1, 0, 'L')
-            pdf.cell(15, 8, f"{qty:g}", 1, 0, 'C') # Show Raw Qty for Purchase usually, or Net?
+            pdf.cell(15, 8, f"{qty:g}", 1, 0, 'C')
             pdf.cell(25, 8, f"{rate:g}", 1, 0, 'R')
             
-            # reused column
-            val = f"{discount:g}" if not is_purchase else "-"
-            pdf.cell(20, 8, val, 1, 0, 'R') 
+            # Discount
+            d_str = f"{discount:g}" if discount > 0 else "-"
+            pdf.cell(20, 8, d_str, 1, 0, 'C')
             
             pdf.cell(40, 8, f"{total:,.2f}", 1, 1, 'R')
             idx += 1
+            rows_printed += 1
             
+    # Minimal Filler Rows
+    min_rows = 10
+    if rows_printed < min_rows:
+        for _ in range(min_rows - rows_printed):
+             if is_batch:
+                 pdf.cell(25, 8, "", 1, 0, 'C')
+                 pdf.cell(70, 8, "", 1, 0, 'L')
+                 pdf.cell(15, 8, "", 1, 0, 'C')
+                 pdf.cell(25, 8, "", 1, 0, 'C')
+                 pdf.cell(20, 8, "", 1, 0, 'C')
+                 pdf.cell(35, 8, "", 1, 1, 'R')
+             elif is_receipt:
+                 pass
+             else:
+                 # Standard mode filler rows removed
+                 pass
         pdf.ln(2)
+
     else:
         # Receipt View - Just show the main description
         pdf.set_fill_color(245, 245, 245)
@@ -636,9 +748,6 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.set_font("Arial", 'B', 10)
     
     if not is_receipt or (is_purchase and not items_df.empty):
-        pdf.cell(45, 7, "Total:", 0, 0, 'R')
-        pdf.cell(35, 7, f"{subtotal:,.2f}", 1, 1, 'R')
-        
         if freight > 0 or misc > 0:
             extras = freight + misc
             pdf.cell(45, 7, "Extra Costs:", 0, 0, 'R')
@@ -963,7 +1072,10 @@ def create_inventory_ledger_pdf(item_name, item_history):
         # Sanitize
         ts = str(row['timestamp'])
         reason = str(row['reason'])
-        change = f"{row['change']:+d}"
+        try:
+            change = f"{int(row['change']):+d}"
+        except:
+            change = f"{row['change']}"
         ref = str(row['reference'])[:20]
         desc = str(row['description'])[:30]
         
@@ -1602,49 +1714,77 @@ menu = st.session_state.page
 
 
 
-def update_sales_grid():
+def update_sales_grid(editor_key="sales_editor"):
     """
     Callback to sync data_editor changes to session_state.sales_grid_data immediately.
     Solves persistence issues on first edit.
     """
-    state = st.session_state["sales_editor"]
-    df = st.session_state.sales_grid_data.copy()
-    
-    # 1. Handle Edited Rows (Indices refer to original DF)
-    # Important: Process edits BEFORE adds/deletes if indices rely on original
-    for idx, changes in state.get("edited_rows", {}).items():
-        # Ensure idx is valid
-        if idx in df.index:
-            for col, val in changes.items():
-                df.at[idx, col] = val
+    if editor_key not in st.session_state:
+        return
 
-    # 2. Handle Deleted Rows
-    deleted_rows = state.get("deleted_rows", [])
-    if deleted_rows:
-        df = df.drop(index=deleted_rows)
-        # Reset index to avoid holes, but careful if edits relied on old index?
-        # Streamlit guarantees deleted_rows indices correspond to the state entering the editor.
-        # Edits also correspond to that state. So we can drop safely after applying edits.
+    # In this environment, the editor key contains a DICTIONARY of changes (edited_rows, etc.) series
+    # rather than the full dataframe. We must manually apply these changes.
+    state = st.session_state[editor_key]
     
-    # 3. Handle Added Rows
-    added_rows = state.get("added_rows", [])
-    for new_row in added_rows:
-        # Fill defaults if missing
-        defaults = {"Item Name": "", "Qty": 1, "Rate": 0.0, "Discount": 0.0, "Return Qty": 0, "Total": 0.0}
-        defaults.update(new_row)
-        df = pd.concat([df, pd.DataFrame([defaults])], ignore_index=True)
+    # If state is a DataFrame (unexpected but possible in newer Streamlit), use it directly
+    if isinstance(state, pd.DataFrame):
+        df = state
+    else:
+        # State is a dict of changes
+        df = st.session_state.sales_grid_data.copy()
+        
+        # 1. Handle Edited Rows
+        # state['edited_rows'] is {row_idx: {col_name: new_value}}
+        for idx, changes in state.get("edited_rows", {}).items():
+            # In dynamic mode, idx matches the current df index
+            if idx in df.index:
+                for col, val in changes.items():
+                    df.at[idx, col] = val
+        
+        # 2. Handle Deleted Rows
+        deleted_rows = state.get("deleted_rows", [])
+        if deleted_rows:
+            df = df.drop(index=deleted_rows)
+            
+        # 3. Handle Added Rows
+        added_rows = state.get("added_rows", [])
+        if added_rows:
+            for new_row in added_rows:
+                # new_row is a dict of values
+                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # 4. Global Recalculation
-    # Clean Types
-    df = df.reset_index(drop=True)
-    df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0)
-    df['Rate'] = pd.to_numeric(df['Rate'], errors='coerce').fillna(0.0)
-    df['Discount'] = pd.to_numeric(df.get('Discount', 0), errors='coerce').fillna(0.0)
-    df['Return Qty'] = pd.to_numeric(df['Return Qty'], errors='coerce').fillna(0)
+    # Now calculate totals on the updated 'df'
+    # 1. Calc Standard Total = Qty * Rate - Discount
+    # Ensure numeric for ALL relevant columns including Return Qty
+    numeric_cols = ['Qty', 'Rate', 'Discount', 'Return Qty']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+            
+    qty = df['Qty']
+    rate = df['Rate']
+    disc = df['Discount'] if 'Discount' in df.columns else 0.0
+    ret_qty = df['Return Qty'] if 'Return Qty' in df.columns else 0.0
     
-    # Apply Formula
-    df['Total'] = ((df['Qty'] - df['Return Qty']) * df['Rate']) - df['Discount']
+    # Standard Total Formula: (Net Qty * Rate) - Discount
+    # If Qty=0 and Ret=1, Net=-1. Total = -Rate.
+    std_total = ((qty - ret_qty) * rate) - disc
     
+    # 2. Conditionally Apply
+    if 'Type' in df.columns:
+        cash_types = ["Cash Received", "Cash Paid"]
+        mask_cash = df['Type'].isin(cash_types)
+        mask_other = ~mask_cash
+        
+        # For Sales/Purchases/Returns: Calculate Total
+        df.loc[mask_other, 'Total'] = std_total[mask_other]
+        
+        # For Cash Rows: Zero out Total (Visual)
+        df.loc[mask_cash, 'Total'] = 0.0
+        
+    else:
+        df['Total'] = std_total
+        
     # Save back
     st.session_state.sales_grid_data = df
 
@@ -1658,11 +1798,11 @@ if menu == "⚡ Quick Invoice":
     # --- TAB 1: NEW INVOICE ---
     with tab_new:
         # Session State for Grid
-        if 'sales_grid_data' not in st.session_state:
-            # Initialize with 3 empty rows for convenience
-            st.session_state.sales_grid_data = pd.DataFrame(
-                [{"Item Name": "", "Qty": 1, "Rate": 0.0, "Discount": 0.0, "Return Qty": 0, "Total": 0.0}] * 3
-            )
+        # if 'sales_grid_data' not in st.session_state:
+        #     # Initialize with 3 empty rows for convenience
+        #     st.session_state.sales_grid_data = pd.DataFrame(
+        #         [{"Date": datetime.now().date(), "Type": "Sale / Item", "Item Name": "", "Qty": 1, "Rate": 0.0, "Discount": 0.0, "Return Qty": 0, "Total": 0.0, "Cash Received": 0.0}] * 3
+        #     )
             
         # --- CACHING LOGIC ---
         # Only fetch customers/Ids if not in session or explicit refresh needed
@@ -1677,7 +1817,7 @@ if menu == "⚡ Quick Invoice":
         with st.container(border=True):
             # NEW: Transaction Type Toggle
             txn_type = st.radio("Transaction Type", ["Sale (Bill)", "Purchase (Stock In)"], horizontal=True, label_visibility="collapsed")
-            is_purchase = "Purchase" in txn_type
+            is_purchase_mode = "Purchase" in txn_type
             
             st.caption(f"Mode: **{txn_type}**")
             
@@ -1688,7 +1828,7 @@ if menu == "⚡ Quick Invoice":
             cust_names = customers_df['name'].tolist() if not customers_df.empty else []
             
             with c1:
-                label_cust = "Select Supplier / Client" if is_purchase else "Select Customer"
+                label_cust = "Select Supplier / Client" if is_purchase_mode else "Select Customer"
                 customer_name = st.selectbox(label_cust, ["Counter Sale"] + cust_names, index=0)
                 
             with c2:
@@ -1696,7 +1836,7 @@ if menu == "⚡ Quick Invoice":
                 
             with c3:
                 # ID (from cache)
-                if is_purchase:
+                if is_purchase_mode:
                     next_inv = st.session_state.cached_next_pur
                     label_id = "Purchase Ref #"
                 else:
@@ -1705,21 +1845,118 @@ if menu == "⚡ Quick Invoice":
                     
                 st.text_input(label_id, value=next_inv, disabled=True)
 
-        # 1.5 PRODUCT SELECTION (Fixed Categories)
+        # --- MODE DETECTION & DATA RESET ---
+        # Detect if mode switched to clear/adapt grid
+        current_mode = "Purchase" if is_purchase_mode else "Sale"
+        if 'last_grid_mode' not in st.session_state:
+            st.session_state.last_grid_mode = current_mode
+            
+        if st.session_state.last_grid_mode != current_mode:
+            # Mode changed! Reset grid to defaults to avoid column mismatches
+            st.session_state.last_grid_mode = current_mode
+            # Clear data
+            if 'sales_grid_data' in st.session_state:
+                del st.session_state['sales_grid_data']
+                
+        # 1.5 PRODUCT SELECTION
         st.markdown("### 📦 Add Product")
         
+        # --- BATCH MODE TOGGLE ---
+        is_batch_mode = st.checkbox("Enable Batch / Multi-Date Mode", help="Record multiple dates and transaction types (Sales/Returns/Cash) in one go.")
+        
+        # Dynamic Columns based on Mode
+        default_data = {
+            "Item Name": [""] * 5,
+            "Qty": [1] * 5,
+            "Rate": [0.0] * 5,
+            "Discount": [0.0] * 5,
+            "Return Qty": [0] * 5,
+            "Total": [0.0] * 5
+        }
+        
+        type_options = []
+        cash_col_name = ""
+        
+        if is_batch_mode:
+            # Add Date and Type
+            default_data["Date"] = [date.today()] * 5
+            
+            if is_purchase_mode:
+                 # USER REQUEST: "Buy Item / Product", "Return Item", "Cash Paid"
+                 buy_label = "Buy Item / Product"
+                 return_label = "Return Item"
+                 cash_label = "Cash Paid"
+                 
+                 default_data["Type"] = [buy_label] * 5
+                 default_data[cash_label] = [0.0] * 5
+                 type_options = [buy_label, cash_label, return_label]
+                 cash_col_name = cash_label
+            else:
+                 sale_label = "Sale / Item"
+                 return_label = "Return"
+                 cash_label = "Cash Received"
+                 
+                 default_data["Type"] = [sale_label] * 5
+                 default_data[cash_label] = [0.0] * 5
+                 type_options = [sale_label, cash_label, return_label]
+                 cash_col_name = cash_label
+        
+        # Initialize Grid
+        if 'sales_grid_data' not in st.session_state:
+            st.session_state.sales_grid_data = pd.DataFrame(default_data)
+
+        # Force column check if mode changed
+        if is_batch_mode and 'sales_grid_data' in st.session_state:
+            if 'Date' not in st.session_state.sales_grid_data.columns:
+                st.session_state.sales_grid_data['Date'] = date.today()
+            if 'Type' not in st.session_state.sales_grid_data.columns and type_options:
+                st.session_state.sales_grid_data['Type'] = type_options[0]
+                
+            # Check Cash Col
+            if cash_col_name and cash_col_name not in st.session_state.sales_grid_data.columns:
+                 st.session_state.sales_grid_data[cash_col_name] = 0.0
+                 
+            # Remove wrong cash col
+            other_cash = "Cash Received" if is_purchase_mode else "Cash Paid"
+            if other_cash in st.session_state.sales_grid_data.columns and other_cash != cash_col_name:
+                del st.session_state.sales_grid_data[other_cash]
+
+        # Inventory / Manual Toggle
+        inventory_items = db.get_all_inventory_names()
+        use_inventory = st.checkbox("Select from Stock", value=True)
+        
         col_prod1, col_prod2 = st.columns([3, 1])
+        selected_category = ""
+        
         with col_prod1:
-             # Fixed Categories
-             selected_category = st.selectbox("Select Product Category", options=["Select Category...", "Inverter", "Charger", "Supplier", "Other"], index=0, key="quick_inv_product_select")
+             if use_inventory:
+                 if inventory_items:
+                     selected_category = st.selectbox("Search Product", inventory_items, index=0, key="quick_inv_product_select")
+                 else:
+                     st.warning("Inventory Empty. Switching to Manual.")
+                     selected_category = st.text_input("Item Name", "")
+             else:
+                 # Manual Category Logic
+                 cat_sel = st.selectbox("Category", ["Select Category...", "Inverter", "Charger", "Supplier", "Other"], key="quick_inv_cat_manual")
+                 if cat_sel == "Select Category...":
+                     selected_category = st.text_input("Item Name", "")
+                 elif cat_sel in ["Inverter", "Charger"]:
+                     prod_list = PROD_TYPES.get(cat_sel, [])
+                     selected_category = st.selectbox(f"Select {cat_sel}", prod_list)
+                 else:
+                     selected_category = st.text_input("Item Name", "")
         
         with col_prod2:
              if st.button("⬇ Add to Cart", type="secondary", width="stretch"):
+
                  if selected_category and selected_category != "Select Category...":
                      
                      # Create new row data
                      new_row = {
-                         "Item Name": selected_category, # Default name is the category
+                         "Date": datetime.now().date(), # For Batch Mode
+                         "Type": "Sale / Item",         # For Batch Mode
+                         "Item Name": selected_category, # Default name is the category or selected item
+
                          "Qty": 1,
                          "Rate": 0.0, # User must enter rate
                          "Discount": 0.0,
@@ -1742,62 +1979,159 @@ if menu == "⚡ Quick Invoice":
         # 2. GRID ENTRY SYSTEM
         st.subheader("🛒 Items Cart")
         
-        # Adjustable Column Config based on Type
-        # For Purchase: Rate = Cost Price. Discount often not needed but kept for flexibility.
-        rate_label = "Cost Price (Rs.)" if is_purchase else "Rate (Rs.)"
+        # Adjustable Column Config
+        if is_purchase_mode:
+             # Purchase Mode Cart Logic
+             pass
         
+        # Determine Rate Label
+        rate_label = "Cost Price (Rs.)" if is_purchase_mode else "Rate (Rs.)"
+        
+        # Column Config
+        column_config = {
+            "Item Name": st.column_config.TextColumn("Item Name (Type freely)", width="large", required=True),
+            "Qty": st.column_config.NumberColumn("Qty", min_value=0, step=1, required=True),
+            "Rate": st.column_config.NumberColumn(rate_label, min_value=0.0, step=10.0, required=True),
+            "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=10.0),
+            "Return Qty": st.column_config.NumberColumn("Return Qty", min_value=0, step=1),
+        }
+
+        # Batch Mode Extras
+        if is_batch_mode:
+            # Ensure variables are set (redundant safety)
+            if 'cash_col_name' not in locals():
+                 cash_col_name = "Cash Paid" if is_purchase_mode else "Cash Received"
+            
+            # Type Options need to be consistent with top block
+            # If not defined, define defaults
+            if 'type_options' not in locals():
+                 type_options = ["Buy Item / Product", "Cash Paid", "Return Item"] if is_purchase_mode else ["Sale / Item", "Cash Received", "Return"]
+
+            column_config["Date"] = st.column_config.DateColumn("Date", required=True)
+            column_config["Type"] = st.column_config.SelectboxColumn("Type", options=type_options, required=True)
+            column_config["Total"] = st.column_config.NumberColumn("Total", disabled=True)
+            column_config[cash_col_name] = st.column_config.NumberColumn(cash_col_name, min_value=0.0, step=100.0, required=True, format="Rs. %.2f")
+            
+            cols_order = ["Date", "Type", "Item Name", "Qty", "Rate", "Discount", "Return Qty", "Total", cash_col_name]
+            
+            action_txt = "Purchases" if is_purchase_mode else "Sales"
+            st.info(f"💡 **Batch Mode Active:** {action_txt} use 'Total'. Payments use '{cash_col_name}'.")
+        else:
+            column_config["Total"] = st.column_config.NumberColumn("Total", disabled=True)
+            cols_order = ["Item Name", "Qty", "Rate", "Discount", "Return Qty", "Total"]
+
+        # Ensure dataframe has correct columns for display
+        display_df_editor = st.session_state.sales_grid_data.copy()
+        
+        # Add missing batch cols if needed (should be handled by update, but safe guard)
+        if is_batch_mode:
+             if 'Date' not in display_df_editor.columns: display_df_editor['Date'] = datetime.now().date()
+             if 'Type' not in display_df_editor.columns: display_df_editor['Type'] = "Sale / Item"
+             if 'Cash Received' not in display_df_editor.columns: display_df_editor['Cash Received'] = 0.0
+        
+        # Filter columns to only show what is needed
+        display_df_editor = display_df_editor[cols_order]
+
+        # Dynamic editor key based on mode
+        current_mode_key = "Purchase" if is_purchase_mode else "Sale"
+        batch_key = "Batch" if is_batch_mode else "Normal"
+        editor_key = f"sales_editor_{current_mode_key}_{batch_key}"
+
         # Editable Dataframe
-        # We use column_config to enforce types
         edited_df = st.data_editor(
-            st.session_state.sales_grid_data,
+            display_df_editor,
             num_rows="dynamic",
             width="stretch",
-            column_config={
-                "Item Name": st.column_config.TextColumn("Item Name (Type freely)", width="large", required=True),
-                "Qty": st.column_config.NumberColumn("Qty", min_value=0, step=1, required=True),
-                "Rate": st.column_config.NumberColumn(rate_label, min_value=0.0, step=10.0, required=True),
-                "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=10.0),
-                "Return Qty": st.column_config.NumberColumn("Return Qty", min_value=0, step=1),
-                "Total": st.column_config.NumberColumn("Total", disabled=True) # Calculated column
-            },
-            key="sales_editor",
-            on_change=update_sales_grid
+            column_config=column_config,
+            key=editor_key,
+            on_change=update_sales_grid,
+            args=(editor_key,),
+            use_container_width=True
         )
         
         # 3. REAL-TIME CALCULATIONS
+        # Logic needs to read from the session state which is the source of truth, 
+        # but display based on local calc? No, update_sales_grid updates session state.
+        
+        # Re-read from session state to get latest calcs
         df_display = st.session_state.sales_grid_data.copy()
         
-        # Sums
+        # Ensure 'Total' is numeric
+        df_display['Total'] = pd.to_numeric(df_display['Total'], errors='coerce').fillna(0.0)
+        
+        # Footer Calculations
         subtotal = df_display['Total'].sum()
+        batch_cash_total = 0.0
+        
+        # Check for Cash Paid or Cash Received
+        if 'Cash Received' in df_display.columns:
+            df_display['Cash Received'] = pd.to_numeric(df_display['Cash Received'], errors='coerce').fillna(0.0)
+            batch_cash_total = df_display['Cash Received'].sum()
+        elif 'Cash Paid' in df_display.columns:
+            df_display['Cash Paid'] = pd.to_numeric(df_display['Cash Paid'], errors='coerce').fillna(0.0)
+            batch_cash_total = df_display['Cash Paid'].sum()
 
         # Footer Inputs
         st.divider()
         fc1, fc2, fc3 = st.columns([2, 1, 1])
         
         with fc2:
-            st.markdown(f"**Subtotal:** Rs. {subtotal:,.2f}")
+            if is_batch_mode:
+                 lbl_sales = "Total Purchases:" if is_purchase_mode else "Total Sales:"
+                 lbl_rcpt = "Total Paid:" if is_purchase_mode else "Total Receipts:"
+                 
+                 st.markdown(f"**{lbl_sales}** Rs. {subtotal:,.2f}")
+                 st.markdown(f"**{lbl_rcpt}** Rs. {batch_cash_total:,.2f}")
+            else:
+                 st.markdown(f"**Subtotal:** Rs. {subtotal:,.2f}")
+                 
             freight = st.number_input("Freight / Kiraya", min_value=0.0, step=50.0)
             misc = st.number_input("Labor / Misc", min_value=0.0, step=50.0)
             
         with fc3:
+            # Grand Total (Bill Amount)
             grand_total = subtotal + freight + misc
             
-            # Visual Feedback
-            if is_purchase:
-                 # We Pay (Red/Orange) - Label updated per user request
-                 st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #eb4d4b; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💸 Net Payable (We paid)</div><div style="font-size:2rem; font-weight:bold; color:#eb4d4b;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
-                 cash_val = 0.0 # User requested removal of Cash Paid option for Purchase
+            # --- 1. GET CASH VALUE ---
+            # We need cash_val BEFORE calculating Net Receivable for display.
+            # This implies Input might appear before the Box in Normal Mode, 
+            # or we render the Box with Grand Total first?
+            # User wants "Net Receivable" to show Remaining. 
+            # So we MUST get input first.
+            
+            cash_val = 0.0
+            if is_purchase_mode:
+                cash_val = 0.0
+            else:
+                if is_batch_mode:
+                    cash_val = 0.0 # Uses batch_cash_total
+                else:
+                    cash_label = "Cash Received"
+                    cash_val = st.number_input(cash_label, min_value=0.0, step=100.0)
+
+            # --- 2. CALCULATE NET RECEIVABLE ---
+            net_receivable = grand_total
+            if is_batch_mode:
+                net_receivable = grand_total - batch_cash_total
+            elif not is_purchase_mode:
+                net_receivable = grand_total - cash_val
+            
+            # --- 3. VISUAL FEEDBACK (The Box) ---
+            if is_purchase_mode:
+                 # We Pay (Red/Orange)
+                 st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #eb4d4b; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💸 Net Payable (We paid)</div><div style="font-size:2rem; font-weight:bold; color:#eb4d4b;">Rs. {net_receivable:,.0f}</div></div>""", unsafe_allow_html=True)
             else:
                  # We Receive (Blue/Green)
-                 st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Receivable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
-                 cash_label = "Cash Received"
-                 cash_val = st.number_input(cash_label, min_value=0.0, step=100.0)
+                 st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Receivable / Rem. Bal</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {net_receivable:,.0f}</div></div>""", unsafe_allow_html=True)
+                 
+                 if is_batch_mode:
+                     st.caption(f"Bill: {grand_total:,.0f} | Paid: {batch_cash_total:,.0f}")
             
             st.write("")
-            btn_label = "✅ Save Purchase" if is_purchase else "✅ Save & Print"
+            btn_label = "✅ Save & Print"
             
             if st.button(btn_label, type="primary", width="stretch"):
-                if customer_name and grand_total >= 0:
+                if customer_name and (grand_total != 0 or not df_display.empty):
                     # Filter out empty rows
                     valid_items = df_display[df_display['Item Name'].str.strip() != ""]
                     
@@ -1833,7 +2167,7 @@ if menu == "⚡ Quick Invoice":
                         # --- SAVE LOGIC ---
                         success = False
                         
-                        if is_purchase:
+                        if is_purchase_mode:
                             # PURCHASE LOGIC
                             success = db.record_purchase(next_inv, customer_name, valid_items, freight + misc, grand_total)
                             
@@ -1842,54 +2176,84 @@ if menu == "⚡ Quick Invoice":
                                     db.add_ledger_entry(customer_name, f"Cash Paid for Pur #{next_inv}", cash_val, 0.0, inv_date)
                         else:
                             # SALES LOGIC
-                            success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
-                            
-                            if success:
-                                if cash_val > 0:
+                            if is_batch_mode:
+                                # BATCH MODE
+                                success = db.record_batch_transactions(next_inv, customer_name, valid_items, freight, misc, grand_total)
+                            else:
+                                # NORMAL MODE
+                                success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
+                                
+                                if success and cash_val > 0:
                                     # Ledger: Credit = Giver (Party gives cash)
                                     db.add_ledger_entry(customer_name, f"Cash Payment for Inv #{next_inv}", 0.0, cash_val, inv_date)
                         
                         if success:
+                            # Update Inventory Stock
+                            for _, row in valid_items.iterrows():
+                                item_name = row.get('Item Name', '')
+                                if not item_name: continue
+                                
+                                qty = float(row.get('Qty', 0))
+                                ret = float(row.get('Return Qty', 0))
+                                txn_type = row.get('Type', '')
+                                
+                                delta = 0
+                                
+                                if is_batch_mode:
+                                    # Batch Mode Logic
+                                    if txn_type in ["Sale / Item", "Sale"]:
+                                        delta = -qty
+                                    elif txn_type == "Return": # Sale Return
+                                        delta = +qty
+                                    elif txn_type == "Buy Item / Product":
+                                        delta = +qty
+                                    elif txn_type == "Return Item": # Purchase Return
+                                        delta = -qty
+                                else:
+                                    # Standard Mode Logic
+                                    net_qty = qty - ret
+                                    if is_purchase_mode:
+                                        delta = net_qty
+                                    else:
+                                        delta = -net_qty
+                                        
+                                if delta != 0:
+                                    db.adjust_inventory_quantity(item_name, delta)
+
                             st.success(f"Transaction {next_inv} Saved Successfully!")
                             
                             # Refresh Cache next time
                             if 'cached_next_inv' in st.session_state: del st.session_state.cached_next_inv
                             if 'cached_next_pur' in st.session_state: del st.session_state.cached_next_pur
-
+                            
                             # --- BALANCE CALCULATION (Local) ---
                             # Previous Balance is what we fetched earlier (prev_bal_n).
-                            # Current Balance = Previous + Transaction Effect
+                            # Current transaction effect:
+                            # Sales/Purchase is Grand Total.
+                            # Cash Paid/Received is cash_val (for normal) or batch_cash_total (for batch).
                             
-                            if is_purchase:
-                                # Purchase: Credit Client (Negative effect on our Receivables)
-                                # Balance = Receivables.
-                                # New Balance = Old Balance - PurchaseAmount + CashPaid
-                                cur_bal_n = prev_bal_n - grand_total + cash_val
+                            txn_amount = grand_total
+                            txn_cash = batch_cash_total if is_batch_mode else cash_val
+                            # Reset Logic
+                            if is_purchase_mode:
+                                new_balance = prev_bal_n - (grand_total - txn_cash)
                             else:
-                                # Sale: Debit Client (Positive effect on Receivables)
-                                # New Balance = Old Balance + SaleAmount - CashReceived
-                                cur_bal_n = prev_bal_n + grand_total - cash_val
+                                new_balance = prev_bal_n + grand_total - txn_cash
                             
-                            # Generate PDF
-                            pdf_bytes = create_sales_invoice_pdf(
-                                next_inv, customer_name, inv_date.strftime('%Y-%m-%d'), 
-                                valid_items, subtotal, freight, misc, grand_total, prev_bal_n, cur_bal_n, cash_val,
-                                is_purchase=is_purchase
-                            )
+                            # Generate PDF (Standard or Batch)
+                            pdf_bytes = create_invoice_pdf(next_inv, customer_name, inv_date, valid_items, subtotal, freight, misc, grand_total, txn_cash, prev_bal_n, new_balance, is_purchase_mode, is_receipt=False, is_batch=is_batch_mode)
                             
-                            # Show Download
-                            prefix_file = "Purchase_" if is_purchase else "Invoice_"
                             st.download_button(
-                                "📥 Download PDF", 
-                                data=pdf_bytes, 
-                                file_name=f"{prefix_file}{next_inv}.pdf", 
-                                mime="application/pdf", 
-                                type="primary",
-                                width="stretch"
+                                label="📄 Download Invoice / Statement",
+                                data=pdf_bytes,
+                                file_name=f"Invoice_{next_inv}.pdf",
+                                mime="application/pdf"
                             )
                             
                             # Clear Grid
-                            del st.session_state.sales_grid_data
+                            if 'sales_grid_data' in st.session_state:
+                                del st.session_state.sales_grid_data
+                            
                             time.sleep(2)
                             st.rerun()
                 else:
@@ -1978,10 +2342,10 @@ if menu == "⚡ Quick Invoice":
                          pdf_items['Return Qty'] = 0
                          pdf_items['Discount'] = 0
                          
-                         pdf_bytes = create_sales_invoice_pdf(
+                         pdf_bytes = create_invoice_pdf(
                              search_inv_input, supplier_name, date_h, 
-                             pdf_items, subtotal_h, diff, 0.0, ledger_total, prev_bal_p, cur_bal_p, cash_paid_h,
-                             is_purchase=True
+                             pdf_items, subtotal_h, diff, 0.0, ledger_total, cash_paid_h, prev_bal_p, cur_bal_p,
+                             is_purchase=True, is_receipt=False, is_batch=False
                          )
                          
                          st.download_button(
@@ -2086,12 +2450,19 @@ if menu == "⚡ Quick Invoice":
                          prev_bal_p = cur_bal_p - ledger_total + cash_received_h
                          
                          # Prepare DF for PDF (Rename columns check)
-                         pdf_items = items_df[['item_name', 'quantity_sold', 'sale_price', 'return_quantity', 'total_amount']].copy()
-                         pdf_items.columns = ['Item Name', 'Qty', 'Rate', 'Return Qty', 'Total']
+                         # Check if it looks like a batch invoice? 
+                         # Let's check items for "Type" column
+                         is_batch_reprint = 'Type' in items_df.columns and items_df['Type'].notnull().any()
                          
-                         pdf_bytes = create_sales_invoice_pdf(
+                         pdf_bytes = create_invoice_pdf(
                              search_inv_input, cust_name_h, date_h, 
-                             pdf_items, subtotal_h, diff, 0.0, ledger_total, prev_bal_p, cur_bal_p, cash_received_h
+                             pdf_items, subtotal_h, diff, 0.0, ledger_total, 
+                             0.0, # Cash received not easily available
+                             prev_bal_p, 
+                             cur_bal_p, 
+                             is_purchase=False,
+                             is_receipt=False,
+                             is_batch=is_batch_reprint
                          )
                          
                          st.download_button(
@@ -2562,15 +2933,29 @@ elif menu == "👥 Partners & Ledger":
              with col_stock_check:
                  st.write("")
                  st.write("")
-                 is_stock = st.checkbox("📦 Select Product Category?", key=f"is_stock_{current_party}")
+                 is_stock = st.checkbox("📦 Select Product / Track Inventory?", key=f"is_stock_{current_party}")
              
              is_purchase_txn = "Purchase" in txn_mode
              
-             selected_category = None
+             selected_product_name = None
              if is_stock:
-                 selected_category = st.selectbox("Select Category", options=["Choose...", "Inverter", "Charger", "Supplier", "Other"], key=f"sel_stock_{current_party}")
-                 if selected_category == "Choose...":
-                      selected_category = None
+                 # Fetch Inventory for Dropdown
+                 inv_df_p = db.get_inventory()
+                 if not inv_df_p.empty:
+                     # Create options map: "Name (Stock: X)" -> Name
+                     # Ensure uniqueness by appending ID if needed, but simple name is usually okay for small shops
+                     # Better: "Name | Stock: X"
+                     inv_opts = {f"{row['item_name']} (Stock: {row['quantity']})": row['item_name'] for _, row in inv_df_p.iterrows()}
+                     
+                     sel_label = st.selectbox("Select Product", options=["Choose..."] + list(inv_opts.keys()), key=f"sel_stock_{current_party}")
+                     
+                     if sel_label != "Choose...":
+                         selected_product_name = inv_opts[sel_label]
+                         # OPTIONAL: Show details
+                         # match_row = inv_df_p[inv_df_p['item_name'] == selected_product_name].iloc[0]
+                         # st.caption(f"Cost: {match_row['cost_price']} | Sell: {match_row['selling_price']}")
+                 else:
+                     st.warning("Inventory is empty.")
 
              # Callback to handle transaction addition safely
              def add_transaction_callback():
@@ -2579,9 +2964,22 @@ elif menu == "👥 Partners & Ledger":
                   
                   # Retrieve Stock Selection & Mode from State
                   is_stock_val = st.session_state.get(f"is_stock_{current_party}", False)
-                  sel_cat_val = st.session_state.get(f"sel_stock_{current_party}", "Choose...")
+                  sel_prod_label = st.session_state.get(f"sel_stock_{current_party}", "Choose...")
                   txn_mode_val = st.session_state.get(f"txn_mode_{current_party}", "Sale")
                   is_pur = "Purchase" in txn_mode_val
+
+                  # Extract Item Name from Label "Name (Stock: X)"
+                  selected_item_name = None
+                  if is_stock_val and sel_prod_label != "Choose...":
+                       # Reverse lookup or just parse string? 
+                       # Parsing is risky if name has delimiters. 
+                       # Better: Re-fetch or rely on consistent formatting.
+                       # Safest: Use the same dictionary logic or cache map.
+                       # Reconstruction for simplicity (assuming unique names)
+                       if " (Stock:" in sel_prod_label:
+                           selected_item_name = sel_prod_label.split(" (Stock:")[0]
+                       else:
+                           selected_item_name = sel_prod_label
 
                   q_curr = st.session_state.get(f"q_{current_party}", 0)
                   r_curr = st.session_state.get(f"r_{current_party}", 0.0)
@@ -2601,14 +2999,26 @@ elif menu == "👥 Partners & Ledger":
                       if is_pur:
                           bill_desc = f"Purchase: {bill_desc}"
                       
-                      # Special Handling for Category Sale (only if Stock checked)
-                      if is_stock_val and sel_cat_val and sel_cat_val != "Choose...":
-                          # Override description if empty or generic
+                      # Inventory & Description Logic
+                      if selected_item_name:
+                          # Override description if empty
                           if not desc_val: 
-                              bill_desc = f"{'Purchase' if is_pur else 'Sale'}: {sel_cat_val}"
+                              bill_desc = f"{'Purchase' if is_pur else 'Sale'}: '{selected_item_name}'"
                           else:
-                               # Append category so reports can pick it up
-                               bill_desc = f"{bill_desc} ({sel_cat_val})"
+                               # Append Item
+                               bill_desc = f"{bill_desc} ({selected_item_name})"
+                          
+                          # --- INVENTORY ADJUSTMENT ---
+                          # Sale: Deduct
+                          # Purchase: Add
+                          delta = 0
+                          if is_pur:
+                              delta = q_curr # Increase Stock
+                          else:
+                              delta = -q_curr # Decrease Stock
+                              
+                          if delta != 0:
+                              db.adjust_inventory_quantity(selected_item_name, delta)
                                
                       # Determine Debit/Credit based on Mode
                       if is_pur:

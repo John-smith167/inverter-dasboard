@@ -577,37 +577,15 @@ class DatabaseManager:
                 "sale_date": date_now
             })
             
-            # 2. Inventory Deduction (Smart Match)
-            # Logic: Deduct (Qty - Return Qty). If result > 0, deduct. If < 0, add? 
-            # User said: "Return Qty... Customer returning old stock during this sale"
-            # So if I sell 5, return 2, net stock change is -3. 
-            # If I sell 0, return 2, net stock change is +2.
-            net_change = qty - ret_qty
-            
-            if not inv_df.empty:
-                # Case-insensitive match on Name
-                # We need to find the item. 
-                # Create a normalized look-up if possible or just loop
-                # Simplest: Loop indices
-                match_indices = inv_df.index[inv_df['item_name'].str.lower() == item_name.strip().lower()].tolist()
-                
-                if match_indices:
-                     # Deduct from first match
-                     i_idx = match_indices[0]
-                     curr_stock = inv_df.at[i_idx, 'quantity']
-                     # Deduction: Stock = Stock - NetChange
-                     # If NetChange is positive (Sold more), Stock decreases.
-                     # If NetChange is negative (Returned more), Stock increases.
-                     new_stock = curr_stock - net_change
-                     inv_df.at[i_idx, 'quantity'] = new_stock
-                     inv_changed = True
+            # 2. Inventory Deduction (Smart Match) - REMOVED (Handled in main.py)
+            pass
 
         if new_rows:
             new_sales_df = pd.DataFrame(new_rows)
             updated_sales = pd.concat([sales_df, new_sales_df], ignore_index=True)
             self._write_data("Sales", updated_sales)
             
-        if inv_changed:
+        if inv_changed: # This will always be False now, but keeping the structure.
             self._write_data("Inventory", inv_df)
             
         # 3. Ledger Update
@@ -619,6 +597,160 @@ class DatabaseManager:
         # Debit = Receiver (Customer owes us) -> Positive Amount in Debit column
         self.add_ledger_entry(customer_name, desc, grand_total, 0.0, datetime.now().date())
         
+        return True
+
+    def record_batch_transactions(self, invoice_id, customer_name, items_df, freight, misc, grand_total=0.0):
+        """
+        Records a batch of mixed transactions (Sale, Cash, Return) with specific dates.
+        """
+        success = True
+        
+        # 1. Process each row
+        sales_rows = []
+        sales_df = self._read_data("Sales")
+        start_id = self._get_next_id(sales_df)
+        
+        inv_df = self._read_data("Inventory")
+        inv_changed = False
+        
+        for idx, row in items_df.iterrows():
+            date_val = str(row['Date'])
+            txn_type = row['Type']
+            item_name = row['Item Name']
+            
+            # Safe numeric conversion
+            try:
+                # Qty
+                qty = float(row['Qty'])
+                # Rate
+                rate = float(row.get('Rate', 0))
+                # RetQty
+                ret_qty = float(row.get('Return Qty', 0))
+                # Total for Sale/Return
+                # Determine Amount (Sale/Buy) and Cash (Received/Paid)
+                row_total = float(row.get('Total', 0.0))
+            
+                # Cash column might be "Cash Received" or "Cash Paid"
+                cash_amt = float(row.get('Cash Received', 0.0))
+                if 'Cash Paid' in row:
+                    cash_amt = float(row.get('Cash Paid', 0.0))
+            except:
+                continue
+                
+            # --- PURCHASE LOGIC ---
+            if txn_type in ["Purchase / Item", "Buy Item / Product"]:
+                 # A. PURCHASE ITEM
+                 # Inventory: INCREASE (Stock In) - REMOVED (Handled in main.py)
+                 pass
+                 
+                 # Ledger: Credit Supplier (We owe money)
+                 desc = f"Purchase '{item_name}' (Ref #{invoice_id})"
+                 self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val)
+
+                 # Partial Payment (Cash Paid)
+                 if cash_amt > 0:
+                      # We Pay: Debit Supplier
+                      self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_amt, 0.0, date_val)
+            
+            elif txn_type == "Cash Paid":
+                 # Standalone Payment
+                 # We Pay: Debit Supplier
+                 if cash_amt > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_amt, 0.0, date_val)
+            
+            # --- SALE LOGIC ---
+            elif txn_type == "Sale / Item":
+                # A. SALE LOGIC
+                # ... same ...
+                sales_rows.append({
+                    "id": start_id + len(sales_rows),
+                    "invoice_id": invoice_id,
+                    "customer_name": customer_name,
+                    "item_name": item_name,
+                    "quantity_sold": qty,
+                    "sale_price": rate,
+                    "return_quantity": ret_qty,
+                    "total_amount": row_total, 
+                    "sale_date": date_val 
+                })
+                
+                # Deduct from Inventory - REMOVED (Handled in main.py)
+                pass
+                
+                # Ledger: Debit Customer
+                desc = f"Sale '{item_name}' (Inv #{invoice_id})"
+                self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val)
+
+                if cash_amt > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_amt, date_val)
+                
+            elif txn_type == "Cash Received":
+                if cash_amt > 0:
+                    self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_amt, date_val)
+                    
+            elif txn_type in ["Return", "Return Item"]:
+                 # --- RETURN LOGIC ---
+                 # Identify if it's Sale or Purchase Return?
+                 # If "Return Item" (Purchase specific label) -> Purchase Return.
+                 # If "Return" (Sale specific label) -> Sale Return.
+                 
+                 is_purchase_return = (txn_type == "Return Item")
+                 
+                 if is_purchase_return:
+                     # Purchase Return: Stock Removed, Debit Supplier - REMOVED (Handled in main.py)
+                     pass
+                     
+                     self.add_ledger_entry(customer_name, f"Return Item '{item_name}' (Ref #{invoice_id})", row_total, 0.0, date_val)
+                 
+                 else:
+                     # Sale Return: Stock Added, Credit Customer - REMOVED (Handled in main.py)
+                     pass
+                     
+                     self.add_ledger_entry(customer_name, f"Return '{item_name}' (Inv #{invoice_id})", 0.0, row_total, date_val)
+                 
+
+                    
+            elif txn_type == "Return":
+                # C. SALES RETURN LOGIC
+                # Return usually means: Customer gives back item, we give credit.
+                # Inventory: Add back.
+                # Ledger: Credit Customer.
+                
+                # Add Inventory - REMOVED (Handled in main.py)
+                pass
+
+                # Ledger: Credit Customer
+                self.add_ledger_entry(customer_name, f"Return '{item_name}' (Inv #{invoice_id})", 0.0, row_total, date_val)
+                
+                # Optional: Record in Sales table but with negative/zero net impact or just skip?
+                # User Requirement: "Process as a Sales Return (Add to Inventory, Credit to Ledger)"
+                # Done above.
+
+        # Save updates
+        if sales_rows:
+            new_sales_df = pd.DataFrame(sales_rows)
+            # Ensure correct columns match sales_df
+            for col in sales_df.columns:
+                if col not in new_sales_df.columns:
+                    new_sales_df[col] = None 
+            
+            # Align cols
+            new_sales_df = new_sales_df[sales_df.columns.intersection(new_sales_df.columns)]
+            
+            sales_df = pd.concat([sales_df, new_sales_df], ignore_index=True)
+            self._write_data("Sales", sales_df)
+            
+        if inv_changed: # This will always be False now, but keeping the structure.
+            self._write_data("Inventory", inv_df)
+            
+        # Add Freight/Misc if any (Date = Today? Or First Date?)
+        # Let's assume Today for Extras unless user wants it per row (not designed).
+        today_date = datetime.now().date()
+        if freight > 0:
+            self.add_ledger_entry(customer_name, f"Freight - Inv #{invoice_id}", freight, 0.0, today_date)
+        if misc > 0:
+            self.add_ledger_entry(customer_name, f"Misc/Labor - Inv #{invoice_id}", misc, 0.0, today_date)
+            
         return True
 
     def get_next_purchase_number(self):
@@ -687,37 +819,15 @@ class DatabaseManager:
                 "purchase_date": date_now
             })
             
-            # 2. Inventory Addition
-            if not inv_df.empty:
-                match_indices = inv_df.index[inv_df['item_name'].str.lower() == item_name.strip().lower()].tolist()
-                
-                if match_indices:
-                     i_idx = match_indices[0]
-                     curr_stock = inv_df.at[i_idx, 'quantity']
-                     # ADD Stock
-                     new_stock = curr_stock + qty
-                     inv_df.at[i_idx, 'quantity'] = new_stock
-                     
-                     # Optional: Update Cost Price? 
-                     # Users often want Weighted Average or Last Purchase Price.
-                     # Let's update Cost Price to this latest purchase price for simplicity/relevance.
-                     if cost > 0:
-                        inv_df.at[i_idx, 'cost_price'] = cost
-                        
-                     inv_changed = True
-                else:
-                    # Item doesn't exist in Stock? 
-                    # Maybe Auto-Create or just Skip?
-                    # For now, we skip auto-create to avoid polluting Inventory with random names.
-                    # User generally selects from existing Categories/Items or adds new item first.
-                    pass
+            # 2. Inventory Addition - REMOVED (Handled in main.py)
+            pass
 
         if new_rows:
             new_purchases_df = pd.DataFrame(new_rows)
             updated_purchases = pd.concat([purchases_df, new_purchases_df], ignore_index=True)
             self._write_data("Purchases", updated_purchases)
             
-        if inv_changed:
+        if inv_changed: # This will always be False now, but keeping the structure.
             self._write_data("Inventory", inv_df)
             
         # 3. Ledger Update
@@ -1265,8 +1375,8 @@ class DatabaseManager:
         """
         Returns Customer Balances sorted by Highest Outstanding.
         Includes calculated columns: Total Sales, Total Paid, Net Outstanding.
-        Now includes DYNAMIC counts for each Inventory Category (based on Sales table and Ledger descriptions).
-        NOW INCLUDES: Deleted Customers (Active in Ledger but missing from Directory).
+        Includes DYNAMIC counts for each Inventory Category (based on Sales table and Ledger descriptions).
+        Includes: Deleted Customers (Active in Ledger but missing from Directory).
         """
         # 1. Get all customers (Directory)
         customers_df = self.get_all_customers()
@@ -1501,3 +1611,55 @@ class DatabaseManager:
         
         total_value = (df['quantity'] * df['cost_price']).sum()
         return float(total_value)
+
+    # --- New Inventory Integration Methods ---
+    def get_all_inventory_names(self):
+        df = self._read_data("Inventory")
+        if df.empty:
+            return []
+        return sorted(df['item_name'].dropna().unique().tolist()) # Sorted for UI
+
+    def get_inventory_item_details(self, item_name):
+        df = self._read_data("Inventory")
+        if df.empty: return None
+        
+        # Filter by name
+        item = df[df['item_name'] == item_name]
+        if item.empty: return None
+        
+        # Return first match as dict
+        return item.iloc[0].to_dict()
+
+    def adjust_inventory_quantity(self, item_name, delta_qty):
+        """
+        Adjust quantity by delta_qty. 
+        delta_qty > 0 (Purchase/Return)
+        delta_qty < 0 (Sale)
+        """
+        df = self._read_data("Inventory")
+        if df.empty: return False, "Inventory not initialized"
+        
+        idx = df.index[df['item_name'] == item_name].tolist()
+        if not idx:
+            return False, f"Item '{item_name}' not found in inventory."
+        
+        idx = idx[0]
+        current_qty = int(df.at[idx, 'quantity'])
+        new_qty = current_qty + delta_qty
+        
+        # Allow negative (monitor overselling) but maybe log it specially?
+        
+        df.at[idx, 'quantity'] = new_qty
+        self._write_data("Inventory", df)
+        
+        # Log it
+        # Try to find item_id
+        item_id = df.at[idx, 'id']
+        
+        action = "Increase" if delta_qty > 0 else "Decrease"
+        self.log_inventory_change(
+            item_id, item_name, delta_qty, 
+            "Transaction", 
+            "Invoice/Bill", f"{action} by {abs(delta_qty)}"
+        )
+        return True, new_qty
