@@ -29,11 +29,10 @@ jobs:
         run: |
           pyinstaller --name SK_INVERTX_TRADERS --onefile --windowed --icon=assets/logo.ico --add-data "inventory.db;." --add-data "assets;assets" run_app.py
 
-      - name: Build Installer with Inno Setup
-        uses: Minionguyjosh/Inno-Setup-Action@v1.2.2
-        with:
-          path: setup.iss
-        # Continue even if Inno Setup fails (e.g., config issues), so we at least get the EXE
+      - name: Compile Inno Setup Script
+        run: |
+          choco install innosetup
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
         continue-on-error: true
 
       - name: Upload Artifacts
