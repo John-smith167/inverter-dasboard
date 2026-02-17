@@ -599,6 +599,38 @@ class DatabaseManager:
         
         return True
 
+    def get_customer_balance(self, customer_name):
+        """
+        Calculates the current balance for a customer/supplier.
+        Positive Balance: We checked logic, typically for Customer: Debit = Receivable.
+        Balance = Sum(Debit) - Sum(Credit).
+        If result > 0: Customer owes us.
+        If result < 0: We owe them (or advance payment).
+        """
+        ledger = self._read_data("Ledger")
+        if ledger.empty:
+            return 0.0
+            
+        # Filter by name
+        # numeric checks or string?
+        if 'party_name' not in ledger.columns:
+            # Fallback for older schema?
+            if 'name' in ledger.columns:
+                cust_df = ledger[ledger['name'].astype(str) == str(customer_name)]
+            else:
+                return 0.0
+        else:
+             cust_ledger = ledger[ledger['party_name'].astype(str) == str(customer_name)]
+             
+        if cust_ledger.empty:
+            return 0.0
+            
+        # Ensure numeric
+        debits = pd.to_numeric(cust_ledger['debit'], errors='coerce').fillna(0.0).sum()
+        credits = pd.to_numeric(cust_ledger['credit'], errors='coerce').fillna(0.0).sum()
+        
+        return debits - credits
+
     def record_batch_transactions(self, invoice_id, customer_name, items_df, freight, misc, grand_total=0.0):
         """
         Records a batch of mixed transactions (Sale, Cash, Return) with specific dates.
@@ -615,128 +647,119 @@ class DatabaseManager:
         
         for idx, row in items_df.iterrows():
             date_val = str(row['Date'])
-            txn_type = row['Type']
-            item_name = row['Item Name']
+            txn_type = row.get('Type', 'Sale')
+            item_name = row.get('Item Name', '')
+            
+            # Filter empty rows
+            if not item_name and row.get('Total', 0) == 0 and row.get('Cash Received', 0) == 0:
+                continue
             
             # Safe numeric conversion
             try:
-                # Qty
-                qty = float(row['Qty'])
-                # Rate
+                qty = float(row.get('Qty', 0))
                 rate = float(row.get('Rate', 0))
-                # RetQty
-                ret_qty = float(row.get('Return Qty', 0))
-                # Total for Sale/Return
-                # Determine Amount (Sale/Buy) and Cash (Received/Paid)
                 row_total = float(row.get('Total', 0.0))
-            
+                
                 # Cash column might be "Cash Received" or "Cash Paid"
-                cash_amt = float(row.get('Cash Received', 0.0))
-                if 'Cash Paid' in row:
-                    cash_amt = float(row.get('Cash Paid', 0.0))
+                # Logic: In main.py, we put value in 'Cash Received' or 'Cash Paid' col based on context
+                cash_recv = float(row.get('Cash Received', 0.0))
+                cash_paid = float(row.get('Cash Paid', 0.0))
+                
+                # If "Cash Received" column is used for everything (as per my main.py logic?)
+                # In main.py I see: `df['Cash Received'] = ...`
+                # Let's trust the columns exist.
             except:
                 continue
                 
-            # --- PURCHASE LOGIC ---
-            if txn_type in ["Purchase / Item", "Buy Item / Product"]:
-                 # A. PURCHASE ITEM
-                 # Inventory: INCREASE (Stock In) - REMOVED (Handled in main.py)
-                 pass
-                 
-                 # Ledger: Credit Supplier (We owe money)
-                 desc = f"Purchase '{item_name}' (Ref #{invoice_id})"
-                 self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val)
-
-                 # Partial Payment (Cash Paid)
-                 if cash_amt > 0:
-                      # We Pay: Debit Supplier
-                      self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_amt, 0.0, date_val)
+            # --- LOGIC BRANCHING ---
             
-            elif txn_type == "Cash Paid":
-                 # Standalone Payment
-                 # We Pay: Debit Supplier
-                 if cash_amt > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_amt, 0.0, date_val)
+            # ALWAYS Record in Sales Table (History) - Including Cash
+            # This ensures they appear in Invoice History and Reprint
             
-            # --- SALE LOGIC ---
-            elif txn_type == "Sale / Item":
-                # A. SALE LOGIC
-                # ... same ...
-                sales_rows.append({
-                    "id": start_id + len(sales_rows),
-                    "invoice_id": invoice_id,
-                    "customer_name": customer_name,
-                    "item_name": item_name,
-                    "quantity_sold": qty,
-                    "sale_price": rate,
-                    "return_quantity": ret_qty,
-                    "total_amount": row_total, 
-                    "sale_date": date_val 
-                })
-                
-                # Deduct from Inventory - REMOVED (Handled in main.py)
-                pass
-                
-                # Ledger: Debit Customer
+            # For Cash rows with empty Item Name, give them a label
+            if not item_name and txn_type in ["Cash Received", "Cash Paid"]:
+                item_name = txn_type
+            
+            sales_rows.append({
+                "id": start_id + len(sales_rows),
+                "invoice_id": invoice_id,
+                "customer_name": customer_name,
+                "item_name": item_name,
+                "quantity_sold": qty,
+                "sale_price": rate,
+                "return_quantity": 0,
+                "total_amount": row_total, 
+                "sale_date": date_val,
+                "type": txn_type,
+                "discount": float(row.get('Discount', 0)),
+                "cash_received": cash_recv,
+                "cash_paid": cash_paid
+            })
+            
+            # 1. SALE
+            if txn_type in ["Sale", "Sale / Item"]:
+                # Ledger: Debit Customer (Receivable)
                 desc = f"Sale '{item_name}' (Inv #{invoice_id})"
                 self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val)
-
-                if cash_amt > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_amt, date_val)
                 
+                # Cash?
+                if cash_recv > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_recv, date_val)
+
+            # 2. PURCHASE
+            elif txn_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
+                # Ledger: Credit Supplier (Payable)
+                desc = f"Purchase '{item_name}' (Ref #{invoice_id})"
+                self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val)
+
+                # Cash Paid?
+                if cash_paid > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_paid, 0.0, date_val)
+                elif cash_recv > 0 and cash_paid == 0:
+                     # Fallback if mapped to cash_recv column
+                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_recv, 0.0, date_val)
+
+            # 3. SALE RETURN
+            elif txn_type in ["Sale Return", "Return"]:
+                # Ledger: Credit Customer (Reduce Receivable)
+                desc = f"Return '{item_name}' (Inv #{invoice_id})"
+                self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val)
+                
+                # If we paid cash back? (Unlikely in batch, but check)
+                if cash_paid > 0:
+                    self.add_ledger_entry(customer_name, f"Cash Refund - Inv #{invoice_id}", cash_paid, 0.0, date_val)
+
+            # 4. PURCHASE RETURN
+            elif txn_type in ["Purchase Return", "Return Item"]:
+                 # Ledger: Debit Supplier (Reduce Payable)
+                 desc = f"Return Item '{item_name}' (Ref #{invoice_id})"
+                 self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val)
+                 
+            # 5. CASH ONLY (Standalone)
             elif txn_type == "Cash Received":
-                if cash_amt > 0:
-                    self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_amt, date_val)
-                    
-            elif txn_type in ["Return", "Return Item"]:
-                 # --- RETURN LOGIC ---
-                 # Identify if it's Sale or Purchase Return?
-                 # If "Return Item" (Purchase specific label) -> Purchase Return.
-                 # If "Return" (Sale specific label) -> Sale Return.
-                 
-                 is_purchase_return = (txn_type == "Return Item")
-                 
-                 if is_purchase_return:
-                     # Purchase Return: Stock Removed, Debit Supplier - REMOVED (Handled in main.py)
-                     pass
-                     
-                     self.add_ledger_entry(customer_name, f"Return Item '{item_name}' (Ref #{invoice_id})", row_total, 0.0, date_val)
-                 
-                 else:
-                     # Sale Return: Stock Added, Credit Customer - REMOVED (Handled in main.py)
-                     pass
-                     
-                     self.add_ledger_entry(customer_name, f"Return '{item_name}' (Inv #{invoice_id})", 0.0, row_total, date_val)
-                 
-
-                    
-            elif txn_type == "Return":
-                # C. SALES RETURN LOGIC
-                # Return usually means: Customer gives back item, we give credit.
-                # Inventory: Add back.
-                # Ledger: Credit Customer.
-                
-                # Add Inventory - REMOVED (Handled in main.py)
-                pass
-
-                # Ledger: Credit Customer
-                self.add_ledger_entry(customer_name, f"Return '{item_name}' (Inv #{invoice_id})", 0.0, row_total, date_val)
-                
-                # Optional: Record in Sales table but with negative/zero net impact or just skip?
-                # User Requirement: "Process as a Sales Return (Add to Inventory, Credit to Ledger)"
-                # Done above.
+                 if cash_recv > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_recv, date_val)
+            
+            elif txn_type == "Cash Paid":
+                 if cash_paid > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_paid, 0.0, date_val)
+            
+            elif txn_type == "Cash":
+                 # Ambiguous ? Use column text
+                 if cash_recv > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_recv, date_val)
+                 if cash_paid > 0:
+                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_paid, 0.0, date_val)
 
         # Save updates
         if sales_rows:
             new_sales_df = pd.DataFrame(sales_rows)
-            # Ensure correct columns match sales_df
+            # Ensure backward compatibility: Add missing old columns to new rows
             for col in sales_df.columns:
                 if col not in new_sales_df.columns:
                     new_sales_df[col] = None 
             
-            # Align cols
-            new_sales_df = new_sales_df[sales_df.columns.intersection(new_sales_df.columns)]
-            
+            # Allow schema evolution: Concatenate will add new columns (like 'type')
             sales_df = pd.concat([sales_df, new_sales_df], ignore_index=True)
             self._write_data("Sales", sales_df)
             
@@ -856,14 +879,17 @@ class DatabaseManager:
         ledger = self._read_data("Ledger")
         if ledger.empty: return 0.0
         
-        # Look for description containing "Invoice #{invoice_id}"
-        # This is a heuristic since we don't have a rigid Invoices table
-        # We look for the entry with the highest ID that matches, assuming it is the creation record.
-        matches = ledger[ledger['description'].astype(str).str.contains(f"Invoice #{invoice_id}", regex=False)]
+        # Look for description containing "#{invoice_id}"
+        # Handles "Inv #{id}" and "Ref #{id}"
+        matches = ledger[ledger['description'].astype(str).str.contains(f"#{invoice_id}", regex=False)]
         
         if not matches.empty:
-            # Usually the debit amount on the customer is the grand total
-            return matches.iloc[-1]['debit']
+            # Calculate Net Impact (Debits - Credits)
+            # For Sales: Debits (Receivable). For Returns/Purchase: Credits.
+            debits = pd.to_numeric(matches['debit'], errors='coerce').fillna(0.0).sum()
+            credits = pd.to_numeric(matches['credit'], errors='coerce').fillna(0.0).sum()
+            return debits - credits
+            
         return 0.0
 
     def get_cash_received_for_invoice(self, invoice_id):
