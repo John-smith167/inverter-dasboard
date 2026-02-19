@@ -615,7 +615,7 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
     pdf.ln(5)
 
     # --- TABLE HEADER ---
-    # --- TABLE HEADER ---
+    pdf.ln(5) # Spacing before table
     pdf.set_font("Arial", 'B', 10)
     pdf.set_fill_color(240, 240, 240)
     
@@ -658,8 +658,12 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
         pdf.cell(40, 8, "Amount", 1, 1, 'C', 1)
         
     # --- TABLE ROWS ---
-    pdf.set_font("Arial", '', 9) # Smaller font for rows
+    pdf.set_font("Arial", size=10) # Smaller font for rows
     rows_printed = 0
+    
+    # X Positions for Batch
+    x_start = 10
+    w_sn, w_dt, w_desc, w_qty, w_rate, w_disc, w_tot, w_cash = 8, 22, 43, 12, 25, 25, 30, 25
     
     if is_receipt:
         pdf.cell(15, 8, "1", 1, 0, 'C')
@@ -691,17 +695,6 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
             date_groups.append((k, list(g)))
             
         idx = 1
-        x_start = 10 # Left Margin
-        
-        # Column Widths
-        w_sn = 8
-        w_dt = 22
-        w_desc = 43
-        w_qty = 12
-        w_rate = 25
-        w_disc = 25
-        w_tot = 30
-        w_cash = 25
         
         for date_str, rows in date_groups:
              # Check if group fits on page (approx)
@@ -748,43 +741,84 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
 
                  cash_str = fmt(cash_val) if cash_val > 0 else "-"
                  
-                 # Draw ROW (Skip Date Cell)
-                 # Move X past S# and Date
+                 
+                 # --- MULTI-CELL LOGIC FOR WRAPPING (WITH PADDING) ---
+                 # 1. Estimate Height
+                 pdf.set_font("Arial", size=10)
+                 line_height = 5
+                 
+                 # Padding Adjustment: Reduces effective width
+                 eff_width = w_desc - 2
+                 
+                 estimated_lines = max(1, int(len(display_name) / (eff_width / 2.5)) + 1)
+                 
+                 if pdf.get_y() + (estimated_lines * line_height) > 275:
+                     pdf.add_page()
+                 
+                 # 2. Save Positions
+                 y_top = pdf.get_y()
+                 x_desc_pos = x_start + w_sn + w_dt
+                 
+                 # 3. Draw Description Text (MultiCell) with Vertical Padding
+                 # Move down by 1mm
+                 pdf.set_xy(x_desc_pos + 1, y_top + 1)
+                 pdf.multi_cell(eff_width, line_height, display_name, border=0, align='L')
+                 y_bottom_text = pdf.get_y()
+                 
+                 # Total Row Height = Text Height + Top Pad + Bottom Pad usually
+                 text_height = y_bottom_text - (y_top + 1)
+                 
+                 # Ensure minimum height (larger now for padding)
+                 row_height = max(8, text_height + 3) # Min 8mm, at least text + 3mm padding
+                 
+                 y_bottom = y_top + row_height
+                 
+                 # 4. Draw Other Cells (Back at Top)
+                 pdf.set_y(y_top)
+                 
+                 # S#
                  pdf.set_x(x_start)
-                 pdf.cell(w_sn, 7, str(idx), 1, 0, 'C') # S#
+                 pdf.cell(w_sn, row_height, str(idx), 1, 0, 'C')
                  
-                 # Placeholder for Date (Empty, No Border? Or Left/Right Only?)
-                 # We will draw a big box later. For now, just move cursor?
-                 # If we draw 1,0,'C', it draws a box. 
-                 # We want the content rows to have borders?
-                 # Yes, user wants "No need line between both rows".
-                 # So we DON'T draw the date cell here. We skip it.
+                 # Date PlaceHolder (Empty) - Draw nothing (transparent)
+                 pdf.set_x(x_start + w_sn + w_dt)
                  
-                 pdf.set_x(x_start + w_sn + w_dt) 
+                 # Description Border
+                 pdf.rect(x_desc_pos, y_top, w_desc, row_height)
                  
-                 pdf.cell(w_desc, 7, display_name, 1, 0, 'L')
-                 pdf.cell(w_qty, 7, fmt(qty) if qty!=0 else "-", 1, 0, 'C')
-                 pdf.cell(w_rate, 7, fmt(rate) if rate!=0 else "-", 1, 0, 'C')
-                 pdf.cell(w_disc, 7, fmt(disc) if disc > 0 else "-", 1, 0, 'C')
-                 pdf.cell(w_tot, 7, fmt(total_val), 1, 0, 'C')
-                 pdf.cell(w_cash, 7, cash_str, 1, 1, 'C')
+                 # Move past Desc
+                 pdf.set_x(x_desc_pos + w_desc)
+                 
+                 # Remaining Columns
+                 pdf.cell(w_qty, row_height, fmt(qty) if qty!=0 else "-", 1, 0, 'C')
+                 pdf.cell(w_rate, row_height, fmt(rate) if rate!=0 else "-", 1, 0, 'C')
+                 pdf.cell(w_disc, row_height, fmt(disc) if disc > 0 else "-", 1, 0, 'C')
+                 pdf.cell(w_tot, row_height, fmt(total_val), 1, 0, 'C')
+                 pdf.cell(w_cash, row_height, cash_str, 1, 1, 'C') # 1,1 moves to next line
+                 
+                 # Explicitly set Y to bottom to be safe (cell 1,1 should handle it but consistent)
+                 pdf.set_y(y_bottom)
                  
                  idx += 1
                  rows_printed += 1
 
              group_end_y = pdf.get_y()
              
-             # Draw the Date Box (Retroactively)
+             # Draw the Date Box (Retroactively for the group)
              # X position: Margin + S# Width
              date_x = x_start + w_sn
              height = group_end_y - group_start_y
              
              if height > 0:
+                 # Check if we crossed a page? 
+                 # If we crossed a page, height calc is wrong.
+                 # Handling page breaks in grouping is hard.
+                 # Assuming invoices fit on one page or accept visual glitch on break.
                  pdf.set_xy(date_x, group_start_y)
-                 pdf.cell(w_dt, height, date_str, 1, 0, 'C') # One big cell with border
-                 pdf.set_xy(x_start, group_end_y) # Reset to end (Left margin)
+                 pdf.cell(w_dt, height, date_str, 1, 0, 'C') # One big cell
+                 pdf.set_xy(x_start, group_end_y) # Reset
              
-             # Separator Space between groups
+             # Separator
              pdf.ln(2)
 
     else:
@@ -792,32 +826,74 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
         idx = 1
         for _, row in items_df.iterrows():
             item_name = str(row['Item Name'])[:45]
+            # Combine Desc if available
+            desc_val = str(row.get('Description', '')).strip()
+            if desc_val and desc_val.lower() != 'nan':
+                 item_display = f"{item_name}\n{desc_val}"
+            else:
+                 item_display = item_name
+
             qty = float(row['Qty'])
             ret = float(row.get('Return Qty', 0))
             rate = float(row.get('Rate', 0))
             
-            # Purchase usually doesn't have discount column in UI, but if it does:
             discount = float(row.get('Discount', 0)) 
             
-            # Check for manually entered Total (if available) or calculate
             if 'Total' in row and pd.notnull(row['Total']):
                  total = float(row['Total'])
             else:
                  total = ((qty - ret) * rate) - discount
             
-            # Format
+            # Helper
             fmt = lambda v: "-" if v==0 else (f"{v:,.0f}" if v%1==0 else f"{v:,.2f}".rstrip('0').rstrip('.'))
 
-            pdf.cell(10, 8, str(idx), 1, 0, 'C')
-            pdf.cell(80, 8, item_name, 1, 0, 'L')
-            pdf.cell(15, 8, fmt(qty), 1, 0, 'C')
-            pdf.cell(25, 8, fmt(rate), 1, 0, 'R')
+            # MULTI-CELL LOGIC (Standard) WITH PADDING
+            line_height = 5
             
-            # Discount
+            w_item_std = 80
+            # Padding
+            eff_width = w_item_std - 2
+            
+            estimated_lines = max(1, int(len(item_display) / (eff_width / 2.5)) + 1)
+            
+            if pdf.get_y() + (estimated_lines * line_height) > 275:
+                 pdf.add_page()
+            
+            y_top = pdf.get_y()
+            x_start_std = 10 # Assuming margin 10
+            
+            # Item Name (Col 2)
+            # Add padding X+1, Y+1
+            pdf.set_xy(x_start_std + 10 + 1, y_top + 1) # S# width 10
+            pdf.multi_cell(eff_width, line_height, item_display, border=0, align='L') # line height 5
+            
+            y_bottom_text = pdf.get_y()
+            text_height = y_bottom_text - (y_top + 1)
+            
+            row_height = max(8, text_height + 3) # Min 8mm, padding 3mm
+            
+            y_bottom = y_top + row_height
+            
+            pdf.set_y(y_top)
+            pdf.set_x(x_start_std)
+            
+            pdf.cell(10, row_height, str(idx), 1, 0, 'C')
+            
+            # Item Border
+            pdf.rect(x_start_std + 10, y_top, w_item_std, row_height)
+            pdf.set_x(x_start_std + 10 + w_item_std)
+            
+            pdf.cell(15, row_height, fmt(qty), 1, 0, 'C')
+            pdf.cell(25, row_height, fmt(rate), 1, 0, 'R')
+            
             d_str = fmt(discount) if discount > 0 else "-"
-            pdf.cell(20, 8, d_str, 1, 0, 'C')
+            pdf.cell(20, row_height, d_str, 1, 0, 'C')
             
-            pdf.cell(40, 8, fmt(total), 1, 1, 'R')
+            pdf.cell(40, row_height, fmt(total), 1, 1, 'R')
+            
+            # Explicit Y set
+            pdf.set_y(y_bottom)
+            
             idx += 1
             rows_printed += 1
             
@@ -2226,7 +2302,7 @@ if menu == "⚡ Quick Invoice":
             "Date": st.column_config.DateColumn("Date", required=True),
             "Type": st.column_config.SelectboxColumn("Type", options=type_options, required=True),
             "Item Name": st.column_config.TextColumn("Item", width="medium", required=True),
-            "Description": st.column_config.TextColumn("Description", width="large"),
+            "Description": st.column_config.TextColumn("Description", width="medium"), # Changed to medium
             "Qty": st.column_config.NumberColumn("Qty", min_value=0.0, step=0.01, format="%.2f", required=True),
             "Rate": st.column_config.NumberColumn("Rate / Amount", min_value=0.0, step=0.01, format="%.2f", required=True),
             "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=0.01, format="%.2f"),
@@ -2484,84 +2560,86 @@ if menu == "⚡ Quick Invoice":
              st.markdown(f"""<div style="background-color:#1a1c24; padding:10px; border-radius:10px; border:2px solid {color}; text-align:center;"><div style="font-size:0.8rem; color:#a9b1d6;">{lbl}</div><div style="font-size:1.8rem; font-weight:bold; color:{color};">Rs. {val_show:,.0f}</div></div>""", unsafe_allow_html=True)
 
         st.write("")
-        if st.button("✅ Save Transaction", type="primary", width="stretch"):
-            if not customer_name:
-                st.error("Select a party first.")
-            elif df_display.empty:
-                st.error("Cart is empty.")
-            else:
-                 valid_items = df_display.copy()
-                 
-                 # Prepare for Backend: Synthesize Cash Rows
-                 # Iterate to find non-zero cash in columns and append 'synthetic' rows
-                 # matching the type logic for 'record_batch_transactions'
-                 
-                 final_rows = []
-                 
-                 for _, row in valid_items.iterrows():
-                     item_name = str(row.get("Item Name", "")).strip()
-                     description_val = str(row.get("Description", "")).strip()
-                     txn_type = row.get("Type", "Sale")
+        # --- SAVE LOGIC ---
+        if 'invoice_saved' not in st.session_state:
+            st.session_state['invoice_saved'] = False
+            
+        if not st.session_state['invoice_saved']:
+            if st.button("✅ Save Transaction", type="primary", width="stretch"):
+                if not customer_name:
+                    st.error("Select a party first.")
+                elif df_display.empty:
+                    st.error("Cart is empty.")
+                else:
+                     valid_items = df_display.copy()
                      
-                     # --- CASH RECEIVED LOGIC ---
-                     # Move Total to Cash Received if user used Rate/Total for simple entry
-                     if txn_type == "Cash Received":
-                         total_row = float(row.get("Total", 0))
-                         cash_row = float(row.get("Cash Received", 0))
-                         
-                         if cash_row == 0 and total_row > 0:
-                             row["Cash Received"] = total_row
-                             row["Total"] = 0 # Not a sale value, but a cash inflow
-                         elif cash_row > 0:
-                             # Keep as is, but ensure Total doesn't double count if user put it there too?
-                             # Usually Total is calculated from Qty*Rate. 
-                             # If user put Qty=1, Rate=1000, Total=1000. And Cash Rec=0. Logic above handles it.
-                             # If user put Qty=1, Rate=0, Total=0. And Cash Rec=1000. All good.
-                             pass
+                     # Prepare for Backend: Synthesize Cash Rows
+                     final_rows = []
                      
-                     # Include row if it has an item name OR it is a standalone Cash transaction
-                     if item_name or txn_type in ["Cash Received", "Cash Paid"]:
-                         final_rows.append(row.to_dict())
-                     # because record_batch_transactions in database.py now handles the column directly.
+                     for _, row in valid_items.iterrows():
+                         item_name = str(row.get("Item Name", "")).strip()
+                         description_val = str(row.get("Description", "")).strip()
+                         txn_type = row.get("Type", "Sale")
                          
-                 # Create new DF for backend
-                 backend_df = pd.DataFrame(final_rows)
-                 
-                 # Fetch Previous Balance BEFORE saving current transaction
-                 # logic: get current ledger balance.
-                 # If we assume get_customer_balance sums all ledger entries:
-                 prev_bal = db.get_customer_balance(customer_name) 
+                         # --- CASH RECEIVED LOGIC ---
+                         if txn_type == "Cash Received":
+                             total_row = float(row.get("Total", 0))
+                             cash_row = float(row.get("Cash Received", 0))
+                             
+                             if cash_row == 0 and total_row > 0:
+                                 row["Cash Received"] = total_row
+                                 row["Total"] = 0 
+                             elif cash_row > 0:
+                                 pass
+                         
+                         if item_name or txn_type in ["Cash Received", "Cash Paid"]:
+                             final_rows.append(row.to_dict())
+                             
+                     backend_df = pd.DataFrame(final_rows)
+                     prev_bal = db.get_customer_balance(customer_name) 
 
-                 success = db.record_batch_transactions(next_inv, customer_name, backend_df, 0, 0, val_show)
-                 
-                 if success:
-                     # ... (Extras) ...
+                     success = db.record_batch_transactions(next_inv, customer_name, backend_df, 0, 0, val_show)
                      
-                     # ... (Inventory) ...
-                              
-                     st.success("Transaction Saved!")
-                     
-                     # PDF Generation
-                     # Calculate Gross Total for PDF "Total Bill"
-                     gross_items_total = valid_items['Total'].sum()
-                     gross_pdf_total = gross_items_total + freight + misc
-                     
-                     # Net Outstanding = Previous Balance + This Invoice Net
-                     new_outstanding = prev_bal + val_show
-                     
-                     is_pur_pdf = grand_net < 0
-                     # Args: ..., prev_bal, NET_OUTSTANDING, ...
-                     pdf_bytes = create_invoice_pdf(next_inv, customer_name, inv_date, valid_items, 0, freight, misc, gross_pdf_total, total_cash_in, prev_bal, new_outstanding, is_purchase=is_pur_pdf, is_batch=True)
-                     
-                     st.download_button("📄 Download PDF", pdf_bytes, f"Inv_{next_inv}.pdf", "application/pdf")
-                     
-                     # Cleanup
-                     if 'sales_grid_data' in st.session_state:
+                     if success:
+                         # PDF Generation
+                         gross_items_total = valid_items['Total'].sum()
+                         gross_pdf_total = gross_items_total + freight + misc
+                         new_outstanding = prev_bal + val_show
+                         is_pur_pdf = grand_net < 0
+                         
+                         pdf_bytes = create_invoice_pdf(next_inv, customer_name, inv_date, valid_items, 0, freight, misc, gross_pdf_total, total_cash_in, prev_bal, new_outstanding, is_purchase=is_pur_pdf, is_batch=True)
+                         
+                         # STORE SESSION STATE
+                         st.session_state['invoice_saved'] = True
+                         st.session_state['latest_pdf'] = pdf_bytes
+                         st.session_state['latest_inv_num'] = next_inv
+                         st.rerun()
+
+        else:
+            # --- SUCCESS STATE ---
+            st.success(f"Transaction Saved! Invoice #{st.session_state.get('latest_inv_num')}")
+            
+            c_d1, c_d2 = st.columns(2)
+            with c_d1:
+                st.download_button(
+                    "📄 Download PDF", 
+                    st.session_state.get('latest_pdf'), 
+                    f"Inv_{st.session_state.get('latest_inv_num')}.pdf", 
+                    "application/pdf",
+                    type="primary"
+                )
+            
+            with c_d2:
+                if st.button("🔄 New Invoice"):
+                    # RESET
+                    st.session_state['invoice_saved'] = False
+                    if 'sales_grid_data' in st.session_state:
                          del st.session_state.sales_grid_data
-                     if 'cached_next_inv' in st.session_state: del st.session_state.cached_next_inv
-                     
-                     time.sleep(2)
-                     st.rerun()
+                    if 'cached_next_inv' in st.session_state: 
+                         del st.session_state.cached_next_inv
+                    if 'latest_pdf' in st.session_state:
+                         del st.session_state.latest_pdf
+                    st.rerun()
 
     # --- TAB 2: INVOICE HISTORY ---
     with tab_hist:
