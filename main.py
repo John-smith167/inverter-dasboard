@@ -50,6 +50,12 @@ secure_startup()
     
 db = DatabaseManager()
 
+# --- PRODUCT TYPES CONSTANTS (Fix for NameError) ---
+PROD_TYPES = {
+    "Inverter": ["1.2 kW", "2.2 kW", "3.2 kW", "4.2 kW", "5.2 kW", "6.2 kW", "8 kW", "10 kW", "12 kW"],
+    "Charger": ["10 Amp", "20 Amp", "30 Amp", "40 Amp", "Make-to-Order"]
+}
+
 # --- PDF INVOICE GENERATOR ---
 def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, is_final=False, labor_data_json="[]", job_id=None):
     pdf = FPDF()
@@ -635,7 +641,7 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
         # Order: S#(8), Date(22), Item Description(43), Qty(12), Rate(25), Disc(25), Total(30), Cash(25)
         pdf.cell(8, 8, "S#", 1, 0, 'C', 1) 
         pdf.cell(22, 8, "Date", 1, 0, 'C', 1)
-        pdf.cell(43, 8, "Item Description", 1, 0, 'L', 1)
+        pdf.cell(43, 8, "Item / Description", 1, 0, 'L', 1)
         pdf.cell(12, 8, "Qty", 1, 0, 'C', 1)
         pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
         pdf.cell(25, 8, "Discount", 1, 0, 'C', 1)
@@ -718,14 +724,29 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                       if txn_type != "Cash Received": continue
                  
                  type_str = str(txn_type).title()
-                 display_name = f"[{type_str}] - {item_name}" if item_name else f"[{type_str}]"
+                 
+                 # Combine Item Name and Description
+                 desc_val = str(row.get('Description', '')).strip()
+                 if desc_val and desc_val.lower() != 'nan':
+                     display_name = f"[{type_str}] {item_name}\n{desc_val}" if item_name else f"[{type_str}] {desc_val}"
+                 else:
+                     display_name = f"[{type_str}] - {item_name}" if item_name else f"[{type_str}]"
                  
                  qty = float(row.get('Qty', 0))
                  rate = float(row.get('Rate', 0))
                  disc = float(row.get('Discount', 0))
                  total_val = float(row.get('Total', 0))
                  cash_val = float(row.get('Cash Received', 0))
-                 cash_str = f"{cash_val:,.0f}" if cash_val > 0 else "-"
+                 
+                 # Helper
+                 def fmt(v):
+                     if v == 0: return "-"
+                     # If decimal part is zero, return integer format
+                     if v % 1 == 0: return f"{v:,.0f}"
+                     # Else return decimal format, strip trailing zeros
+                     return f"{v:,.2f}".rstrip('0').rstrip('.')
+
+                 cash_str = fmt(cash_val) if cash_val > 0 else "-"
                  
                  # Draw ROW (Skip Date Cell)
                  # Move X past S# and Date
@@ -742,10 +763,10 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                  pdf.set_x(x_start + w_sn + w_dt) 
                  
                  pdf.cell(w_desc, 7, display_name, 1, 0, 'L')
-                 pdf.cell(w_qty, 7, f"{qty:g}", 1, 0, 'C')
-                 pdf.cell(w_rate, 7, f"{rate:,.0f}", 1, 0, 'C')
-                 pdf.cell(w_disc, 7, f"{disc:,.0f}" if disc > 0 else "-", 1, 0, 'C')
-                 pdf.cell(w_tot, 7, f"{total_val:,.0f}", 1, 0, 'C')
+                 pdf.cell(w_qty, 7, fmt(qty) if qty!=0 else "-", 1, 0, 'C')
+                 pdf.cell(w_rate, 7, fmt(rate) if rate!=0 else "-", 1, 0, 'C')
+                 pdf.cell(w_disc, 7, fmt(disc) if disc > 0 else "-", 1, 0, 'C')
+                 pdf.cell(w_tot, 7, fmt(total_val), 1, 0, 'C')
                  pdf.cell(w_cash, 7, cash_str, 1, 1, 'C')
                  
                  idx += 1
@@ -784,16 +805,19 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
             else:
                  total = ((qty - ret) * rate) - discount
             
+            # Format
+            fmt = lambda v: "-" if v==0 else (f"{v:,.0f}" if v%1==0 else f"{v:,.2f}".rstrip('0').rstrip('.'))
+
             pdf.cell(10, 8, str(idx), 1, 0, 'C')
             pdf.cell(80, 8, item_name, 1, 0, 'L')
-            pdf.cell(15, 8, f"{qty:g}", 1, 0, 'C')
-            pdf.cell(25, 8, f"{rate:g}", 1, 0, 'R')
+            pdf.cell(15, 8, fmt(qty), 1, 0, 'C')
+            pdf.cell(25, 8, fmt(rate), 1, 0, 'R')
             
             # Discount
-            d_str = f"{discount:g}" if discount > 0 else "-"
+            d_str = fmt(discount) if discount > 0 else "-"
             pdf.cell(20, 8, d_str, 1, 0, 'C')
             
-            pdf.cell(40, 8, f"{total:,.2f}", 1, 1, 'R')
+            pdf.cell(40, 8, fmt(total), 1, 1, 'R')
             idx += 1
             rows_printed += 1
             
@@ -836,14 +860,15 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
     
     if is_batch:
         # --- DETAILED BREAKDOWN FOR BATCH ---
-        # 1. Calculate Sub-totals from items_df
+        # 1. Calculate Sub-totals
         sales_t = 0.0
         purchase_t = 0.0
+        sale_ret_t = 0.0
+        pur_ret_t = 0.0
         cash_rec_t = 0.0
         cash_paid_t = 0.0
         
         # Iterate to sum
-        # Note: items_df might be a list or DF
         rows_iter = items_df.to_dict('records') if isinstance(items_df, pd.DataFrame) else items_df
         
         for row in rows_iter:
@@ -856,9 +881,31 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
             # Cash values
             try: c_in = float(row.get('Cash Received', 0.0))
             except: c_in = 0.0
+            def_paid = 0.0 
+            # If Type is "Cash Received", check if it's meant to be "Paid"?
+            # Logic: If Type is Cash Received, it is Cash In. 
+            # If Type is Purchase, we might have Cash Paid logic from previous steps?
+            # Re-read row logic: We rely on 'Cash Received' column usually.
+            # But let's check if 'Cash Paid' column exists in DF?
             try: c_out = float(row.get('Cash Paid', 0.0))
             except: c_out = 0.0
             
+            # Correction: In Batch Mode, we usually only have "Cash Received" column for simplicity?
+            # User tip says: "Use 'Cash Received' column for payments."
+            # So for Purchase, 'Cash Received' value = Cash Out.
+            
+            if r_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
+                # If Purchase, Cash Received col is Cash Out
+                c_out += c_in
+                c_in = 0.0
+            elif r_type in ["Sale Return", "Return"]:
+                # Sale Return means we pay back? (Cash Out)
+                c_out += c_in 
+                c_in = 0.0
+            elif r_type in ["Purchase Return", "Return Item"]:
+                # Purchase Return means supplier pays us? (Cash In)
+                pass # c_in is correct
+                
             cash_rec_t += c_in
             cash_paid_t += c_out
             
@@ -868,27 +915,34 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
             elif r_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
                 purchase_t += r_total
             elif r_type in ["Sale Return", "Return"]:
-                sales_t -= r_total # Return reduces sale? Or separate? 
-                # Let's subtract for "Net Sale"
+                sale_ret_t += r_total
             elif r_type in ["Purchase Return", "Return Item"]:
-                 purchase_t -= r_total
-                 
-            # If Type is Cash, we handled columns above. 
-            # If row itself is Cash Type, r_total is usually 0, but check logic
-            if r_type == "Cash Received":
-                 # If cash row has total? usually it has Cash Rec column.
-                 pass
+                pur_ret_t += r_total
+                
+            # If Type is Cash Received, total is 0 usually (we handled cash above), 
+            # but if user put amount in Total col, we should have logic to move it?
+            # We fixed that in save logic. In PDF, we read what's there.
+            # If txn_type == "Cash Received", r_total should be ignored for Goods Total.
+            pass
 
         # DISPLAY
-        # 1. Total Sale
-        if sales_t != 0:
-             pdf.cell(45, 7, "Total Sale Bill:", 0, 0, 'R')
-             pdf.cell(35, 7, f"{sales_t:,.0f}", 1, 1, 'R')
-             
-        # 2. Total Purchase
-        if purchase_t != 0:
-             pdf.cell(45, 7, "Total Purchase Bill:", 0, 0, 'R')
-             pdf.cell(35, 7, f"{purchase_t:,.0f}", 1, 1, 'R')
+        # 1. Sale Section
+        if sales_t != 0 or sale_ret_t != 0:
+             if sales_t != 0:
+                 pdf.cell(45, 7, "Total Sale Bill:", 0, 0, 'R')
+                 pdf.cell(35, 7, f"{sales_t:,.0f}", 1, 1, 'R')
+             if sale_ret_t != 0:
+                 pdf.cell(45, 7, "Total Sale Return:", 0, 0, 'R')
+                 pdf.cell(35, 7, f"-{sale_ret_t:,.0f}", 1, 1, 'R')
+                 
+        # 2. Purchase Section
+        if purchase_t != 0 or pur_ret_t != 0:
+             if purchase_t != 0:
+                 pdf.cell(45, 7, "Total Purchase Bill:", 0, 0, 'R')
+                 pdf.cell(35, 7, f"{purchase_t:,.0f}", 1, 1, 'R')
+             if pur_ret_t != 0:
+                 pdf.cell(45, 7, "Total Purchase Return:", 0, 0, 'R')
+                 pdf.cell(35, 7, f"-{pur_ret_t:,.0f}", 1, 1, 'R')
 
         # 3. Cash Received
         if cash_rec_t > 0:
@@ -903,17 +957,14 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
              pdf.cell(35, 7, f"{cash_paid_t:,.0f}", 1, 1, 'R', 1)
              
         # 5. Balance Due (Current Invoice Net)
-        # Net = (Sales - Purch) - (CashIn - CashOut)
-        # Verify if grand_total matches this? 
-        # grand_total usually passed as Net of Items.
-        # So bill_net = grand_total - (CashIn - CashOut) ??
-        # No, grand_total from UI usually excludes Cash.
-        # But wait, we just calculated sales_t and purchase_t.
-        # current_net = (sales_t - purchase_t) - (cash_rec_t - cash_paid_t)
+        # Net = (Sales - S.Ret) - (Purch - P.Ret) - (CashIn - CashOut)
+        net_sale = sales_t - sale_ret_t
+        net_purch = purchase_t - pur_ret_t
+        net_cash = cash_rec_t - cash_paid_t
         
-        current_net = (sales_t - purchase_t) - (cash_rec_t - cash_paid_t)
+        current_net = net_sale - net_purch - net_cash
         
-        # Override Outstanding Balance for Batch (since passed arg might be just Previous Balance for new invoices)
+        # Override Outstanding Balance for Batch
         outstanding_balance = previous_balance + current_net
         
         pdf.set_font("Arial", 'B', 11)
@@ -2051,8 +2102,8 @@ if menu == "⚡ Quick Invoice":
             "Total": [0.0] * 5
         }
         
-        # UNIFIED TYPE OPTIONS - REMOVED CASH
-        type_options = ["Sale", "Purchase", "Sale Return", "Purchase Return"]
+        # UNIFIED TYPE OPTIONS - WITH CASH RECEIVED
+        type_options = ["Sale", "Purchase", "Sale Return", "Purchase Return", "Cash Received"]
         
         # Initialize Grid
         if 'sales_grid_data' not in st.session_state:
@@ -2063,6 +2114,8 @@ if menu == "⚡ Quick Invoice":
             st.session_state.sales_grid_data['Date'] = date.today()
         if 'Type' not in st.session_state.sales_grid_data.columns:
              st.session_state.sales_grid_data['Type'] = "Sale"
+        if 'Description' not in st.session_state.sales_grid_data.columns:
+             st.session_state.sales_grid_data['Description'] = ""
              
         # Ensure Cash Received exists
         if "Cash Received" not in st.session_state.sales_grid_data.columns:
@@ -2111,6 +2164,9 @@ if menu == "⚡ Quick Invoice":
                      selected_category = st.text_input("Item Name", "")
         
         with col_prod2:
+             # Description Input (New)
+             description_input = st.text_input("Description (Optional)", key="quick_inv_desc_input")
+             
              if st.button("⬇ Add to Cart", type="secondary", width="stretch"):
 
                  if selected_category and selected_category != "Select Category...":
@@ -2120,6 +2176,7 @@ if menu == "⚡ Quick Invoice":
                         "Date": datetime.now().date(), # For Batch Mode
                         "Type": "Sale",                # Default to Sale
                         "Item Name": selected_category, 
+                        "Description": description_input, # New Field
                         "Qty": 1,
                         "Rate": 0.0, 
                         "Discount": 0.0,
@@ -2168,16 +2225,17 @@ if menu == "⚡ Quick Invoice":
         column_config = {
             "Date": st.column_config.DateColumn("Date", required=True),
             "Type": st.column_config.SelectboxColumn("Type", options=type_options, required=True),
-            "Item Name": st.column_config.TextColumn("Item / Description", width="large", required=True),
-            "Qty": st.column_config.NumberColumn("Qty", min_value=0.0, step=1.0, required=True),
-            "Rate": st.column_config.NumberColumn("Rate / Amount", min_value=0.0, step=10.0, required=True),
-            "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=10.0),
-            "Cash Received": st.column_config.NumberColumn("Cash Received", min_value=0.0, step=100.0, required=True),
-            "Total": st.column_config.NumberColumn("Total", disabled=True),
+            "Item Name": st.column_config.TextColumn("Item", width="medium", required=True),
+            "Description": st.column_config.TextColumn("Description", width="large"),
+            "Qty": st.column_config.NumberColumn("Qty", min_value=0.0, step=0.01, format="%.2f", required=True),
+            "Rate": st.column_config.NumberColumn("Rate / Amount", min_value=0.0, step=0.01, format="%.2f", required=True),
+            "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=0.01, format="%.2f"),
+            "Cash Received": st.column_config.NumberColumn("Cash Received", min_value=0.0, step=0.01, format="%.2f", required=True),
+            "Total": st.column_config.NumberColumn("Total", disabled=True, format="%.2f"),
         }
         
         # Display Order
-        cols_order = ["Date", "Type", "Item Name", "Qty", "Rate", "Discount", "Total", "Cash Received"]
+        cols_order = ["Date", "Type", "Item Name", "Description", "Qty", "Rate", "Discount", "Total", "Cash Received"]
 
         # Help Text
         st.info("💡 **Tip:** Use 'Cash Received' column for payments. For Purchases, leaving it 0 means Credit.")
@@ -2187,17 +2245,19 @@ if menu == "⚡ Quick Invoice":
         
         # Filter columns to only show what is needed
         # We need to ensure all cols exist first
+        # We need to ensure all cols exist first
         for c in cols_order:
             if c not in display_df_editor.columns:
                 if c == "Date": display_df_editor[c] = date.today()
                 elif c == "Type": display_df_editor[c] = "Sale"
                 elif c == "Qty": display_df_editor[c] = 1
+                elif c == "Description": display_df_editor[c] = ""
                 else: display_df_editor[c] = 0.0
                 
         display_df_editor = display_df_editor[cols_order]
 
         # Unified Key
-        editor_key = "sales_editor_unified"
+        editor_key = "sales_editor_unified_v2"
 
         edited_df = st.data_editor(
             st.session_state.sales_grid_data,
@@ -2333,6 +2393,33 @@ if menu == "⚡ Quick Invoice":
              # Purchase Return -> Cash In (Refund from Supplier)
              df_display.loc[mask_pr, 'Real Cash In'] = df_display.loc[mask_pr, 'Cash Received']
 
+             # CASH RECEIVED TYPE
+             # Logic: If Type is "Cash Received", the amount is either in "Cash Received" column
+             # OR in "Total" column (if user entered it there).
+             mask_cash_recv = df_display['Type'] == "Cash Received"
+             # 1. Take 'Cash Received' column value
+             cash_val_col = df_display.loc[mask_cash_recv, 'Cash Received']
+             # 2. Add 'Total' column value IF 'Cash Received' is 0
+             total_val_col = df_display.loc[mask_cash_recv, 'Total']
+             
+             # Vectorized logic: if cash_rec > 0, use it. Else use total.
+             # Wait, better logic:
+             # Just sum both? If a user puts 500 in Total and 0 in CashRec, we take 500.
+             # If user puts 0 in Total and 500 in CashRec, we take 500.
+             # If user puts 500 in Total AND 500 in CashRec? (Ambiguous, but likely same value).
+             # Let's take MAX of both to avoid double counting? Or just Total + CashRec?
+             # My save logic only moves Total to CashRec if CashRec is 0.
+             # So safely: value = Cash Received + (Total if Cash Received == 0 else 0)
+             
+             # Implementation:
+             c_r = df_display.loc[mask_cash_recv, 'Cash Received']
+             t_r = df_display.loc[mask_cash_recv, 'Total']
+             
+             # Where Cash Rec is 0, take Total.
+             effective_cash = c_r.where(c_r > 0, t_r)
+             
+             df_display.loc[mask_cash_recv, 'Real Cash In'] += effective_cash
+
              total_cash_in = df_display['Real Cash In'].sum()
              total_cash_out = df_display['Real Cash Out'].sum()
              
@@ -2413,13 +2500,28 @@ if menu == "⚡ Quick Invoice":
                  
                  for _, row in valid_items.iterrows():
                      item_name = str(row.get("Item Name", "")).strip()
+                     description_val = str(row.get("Description", "")).strip()
                      txn_type = row.get("Type", "Sale")
+                     
+                     # --- CASH RECEIVED LOGIC ---
+                     # Move Total to Cash Received if user used Rate/Total for simple entry
+                     if txn_type == "Cash Received":
+                         total_row = float(row.get("Total", 0))
+                         cash_row = float(row.get("Cash Received", 0))
+                         
+                         if cash_row == 0 and total_row > 0:
+                             row["Cash Received"] = total_row
+                             row["Total"] = 0 # Not a sale value, but a cash inflow
+                         elif cash_row > 0:
+                             # Keep as is, but ensure Total doesn't double count if user put it there too?
+                             # Usually Total is calculated from Qty*Rate. 
+                             # If user put Qty=1, Rate=1000, Total=1000. And Cash Rec=0. Logic above handles it.
+                             # If user put Qty=1, Rate=0, Total=0. And Cash Rec=1000. All good.
+                             pass
                      
                      # Include row if it has an item name OR it is a standalone Cash transaction
                      if item_name or txn_type in ["Cash Received", "Cash Paid"]:
                          final_rows.append(row.to_dict())
-                     
-                     # Note: We no longer generate synthetic rows for "Cash Received" column values
                      # because record_batch_transactions in database.py now handles the column directly.
                          
                  # Create new DF for backend

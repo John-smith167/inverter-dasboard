@@ -543,7 +543,7 @@ class DatabaseManager:
         # 1. Update Sales Table
         sales_df = self._read_data("Sales")
         # Extended Schema for Sales
-        cols = ["id", "invoice_id", "customer_name", "item_name", "quantity_sold", 
+        cols = ["id", "invoice_id", "customer_name", "item_name", "description", "quantity_sold", 
                 "sale_price", "return_quantity", "total_amount", "sale_date"]
                 
         if sales_df.empty:
@@ -648,7 +648,9 @@ class DatabaseManager:
         for idx, row in items_df.iterrows():
             date_val = str(row['Date'])
             txn_type = row.get('Type', 'Sale')
+            txn_type = row.get('Type', 'Sale')
             item_name = row.get('Item Name', '')
+            description = row.get('Description', '')
             
             # Filter empty rows
             if not item_name and row.get('Total', 0) == 0 and row.get('Cash Received', 0) == 0:
@@ -693,7 +695,10 @@ class DatabaseManager:
                 "type": txn_type,
                 "discount": float(row.get('Discount', 0)),
                 "cash_received": cash_recv,
-                "cash_paid": cash_paid
+                "discount": float(row.get('Discount', 0)),
+                "cash_received": cash_recv,
+                "cash_paid": cash_paid,
+                "description": description
             })
             
             # 1. SALE
