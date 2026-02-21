@@ -704,57 +704,57 @@ class DatabaseManager:
             # 1. SALE
             if txn_type in ["Sale", "Sale / Item"]:
                 # Ledger: Debit Customer (Receivable)
-                desc = f"Sale '{item_name}' (Inv #{invoice_id})"
-                self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val)
+                desc = f"{txn_type} '{item_name}'"; desc = desc + f" - {description}" if description else desc
+                self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val, quantity=qty, rate=rate, discount=float(row.get("Discount", 0)), ref_no=invoice_id)
                 
                 # Cash?
                 if cash_recv > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_recv, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Received", 0.0, cash_recv, date_val, ref_no=invoice_id)
 
             # 2. PURCHASE
             elif txn_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
                 # Ledger: Credit Supplier (Payable)
-                desc = f"Purchase '{item_name}' (Ref #{invoice_id})"
-                self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val)
+                desc = f"{txn_type} '{item_name}'"; desc = desc + f" - {description}" if description else desc
+                self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val, quantity=qty, rate=rate, discount=float(row.get("Discount", 0)), ref_no=invoice_id)
 
                 # Cash Paid?
                 if cash_paid > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_paid, 0.0, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Paid", cash_paid, 0.0, date_val, ref_no=invoice_id)
                 elif cash_recv > 0 and cash_paid == 0:
                      # Fallback if mapped to cash_recv column
-                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_recv, 0.0, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Paid", cash_recv, 0.0, date_val, ref_no=invoice_id)
 
             # 3. SALE RETURN
             elif txn_type in ["Sale Return", "Return"]:
                 # Ledger: Credit Customer (Reduce Receivable)
-                desc = f"Return '{item_name}' (Inv #{invoice_id})"
-                self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val)
+                desc = f"{txn_type} '{item_name}'"; desc = desc + f" - {description}" if description else desc
+                self.add_ledger_entry(customer_name, desc, 0.0, row_total, date_val, quantity=qty, rate=rate, discount=float(row.get("Discount", 0)), ref_no=invoice_id)
                 
                 # If we paid cash back? (Unlikely in batch, but check)
                 if cash_paid > 0:
-                    self.add_ledger_entry(customer_name, f"Cash Refund - Inv #{invoice_id}", cash_paid, 0.0, date_val)
+                    self.add_ledger_entry(customer_name, "Cash Refund", cash_paid, 0.0, date_val, ref_no=invoice_id)
 
             # 4. PURCHASE RETURN
             elif txn_type in ["Purchase Return", "Return Item"]:
                  # Ledger: Debit Supplier (Reduce Payable)
-                 desc = f"Return Item '{item_name}' (Ref #{invoice_id})"
-                 self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val)
+                 desc = f"{txn_type} '{item_name}'"; desc = desc + f" - {description}" if description else desc
+                 self.add_ledger_entry(customer_name, desc, row_total, 0.0, date_val, quantity=qty, rate=rate, discount=float(row.get("Discount", 0)), ref_no=invoice_id)
                  
             # 5. CASH ONLY (Standalone)
             elif txn_type == "Cash Received":
                  if cash_recv > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_recv, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Received", 0.0, cash_recv, date_val, ref_no=invoice_id)
             
             elif txn_type == "Cash Paid":
                  if cash_paid > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_paid, 0.0, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Paid", cash_paid, 0.0, date_val, ref_no=invoice_id)
             
             elif txn_type == "Cash":
                  # Ambiguous ? Use column text
                  if cash_recv > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Rcvd - Inv #{invoice_id}", 0.0, cash_recv, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Received", 0.0, cash_recv, date_val, ref_no=invoice_id)
                  if cash_paid > 0:
-                     self.add_ledger_entry(customer_name, f"Cash Paid - Ref #{invoice_id}", cash_paid, 0.0, date_val)
+                     self.add_ledger_entry(customer_name, "Cash Paid", cash_paid, 0.0, date_val, ref_no=invoice_id)
 
         # Save updates
         if sales_rows:
@@ -775,9 +775,9 @@ class DatabaseManager:
         # Let's assume Today for Extras unless user wants it per row (not designed).
         today_date = datetime.now().date()
         if freight > 0:
-            self.add_ledger_entry(customer_name, f"Freight - Inv #{invoice_id}", freight, 0.0, today_date)
+            self.add_ledger_entry(customer_name, "Freight", freight, 0.0, today_date, ref_no=invoice_id)
         if misc > 0:
-            self.add_ledger_entry(customer_name, f"Misc/Labor - Inv #{invoice_id}", misc, 0.0, today_date)
+            self.add_ledger_entry(customer_name, "Misc/Labor", misc, 0.0, today_date, ref_no=invoice_id)
             
         return True
 
@@ -860,9 +860,9 @@ class DatabaseManager:
             
         # 3. Ledger Update
         # Credit the Supplier (We owe them)
-        desc = f"Purchase #{purchase_id}"
+        desc = "Batch Purchase"
         # Ledger: Credit = Giver (Supplier gives us goods) -> Positive Amount in Credit column
-        self.add_ledger_entry(supplier_name, desc, 0.0, grand_total, datetime.now().date())
+        self.add_ledger_entry(supplier_name, desc, 0.0, grand_total, datetime.now().date(), ref_no=purchase_id)
         
         return True
 
@@ -976,9 +976,9 @@ class DatabaseManager:
         return pd.DataFrame({'parts': [parts], 'service': [service]})
 
     # --- Ledger Methods ---
-    def add_ledger_entry(self, party_name, description, debit, credit, date_val=None, quantity=0, rate=0.0, discount=0.0):
+    def add_ledger_entry(self, party_name, description, debit, credit, date_val=None, quantity=0, rate=0.0, discount=0.0, ref_no=""):
         df = self._read_data("Ledger")
-        columns = ["id", "party_name", "date", "description", "debit", "credit", "quantity", "rate", "discount"]
+        columns = ["id", "party_name", "date", "ref_no", "description", "debit", "credit", "quantity", "rate", "discount"]
         if df.empty:
             df = pd.DataFrame(columns=columns)
             
@@ -997,7 +997,8 @@ class DatabaseManager:
             "credit": float(credit),
             "quantity": int(quantity) if quantity else 0,
             "rate": float(rate) if rate else 0.0,
-            "discount": float(discount) if discount else 0.0
+            "discount": float(discount) if discount else 0.0,
+            "ref_no": str(ref_no)
         }])
         
         updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -1018,13 +1019,15 @@ class DatabaseManager:
                     party_ledger['rate'] = 0.0
                 if 'discount' not in party_ledger.columns:
                     party_ledger['discount'] = 0.0
+                if 'ref_no' not in party_ledger.columns:
+                    party_ledger['ref_no'] = ""
                     
-                party_ledger = party_ledger[['id', 'date', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount']]
+                party_ledger = party_ledger[['id', 'date', 'ref_no', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount']]
             except KeyError:
                 # Fallback if columns missing
-                 party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount'])
+                 party_ledger = pd.DataFrame(columns=['id', 'date', 'ref_no', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount'])
         else:
-            party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount'])
+            party_ledger = pd.DataFrame(columns=['id', 'date', 'ref_no', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount'])
             
         # Fetch Opening Balance from Customers
         cust_df = self._read_data("Customers")
@@ -1055,7 +1058,8 @@ class DatabaseManager:
                 "credit": credit,
                 "quantity": 0,
                 "rate": 0.0,
-                "discount": 0.0
+                "discount": 0.0,
+                "ref_no": ""
             }])
             
             # Combine: Opening Balance First

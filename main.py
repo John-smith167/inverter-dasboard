@@ -210,7 +210,7 @@ def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, 
     
     return pdf.output(dest='S').encode('latin-1')
 
-def create_ledger_pdf(party_name, ledger_df, final_balance):
+def create_ledger_pdf(party_name, ledger_df, final_balance, is_filtered=False, prev_balance=0.0):
     # Fetch Customer Details from DB
     customers = db.get_all_customers()
     c_row = None
@@ -221,163 +221,342 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
             
     # Helper for placeholders
     def get_val_or_line(val, line_len=20):
-        # Convert to string and strip
         s_val = str(val).strip() if pd.notna(val) else ""
         if s_val.endswith(".0"): s_val = s_val[:-2] # Remove decimal from IDs/Phones
         if s_val.lower() == "nan" or s_val == "":
             return "_" * line_len
         return s_val
 
-    # Safely extract
     c_address = get_val_or_line(c_row.get('address'), 50) if c_row is not None else "_"*50
     c_nic = get_val_or_line(c_row.get('nic'), 20) if c_row is not None else "_"*20
     c_phone = get_val_or_line(c_row.get('phone'), 20) if c_row is not None else "_"*20
     
-    pdf = FPDF()
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
-    # --- HEADER SECTION ---
-    # Logo
-    if os.path.exists("assets/logo.png"): 
-        pdf.image("assets/logo.png", 88.5, 8, 33)
-    
-    pdf.set_y(35) # Ensure title is not covered
+    # --- LOGO & HEADER ---
     pdf.set_font("Arial", 'B', 20)
-    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
+    if os.path.exists("assets/logo.png"):
+        pdf.image("assets/logo.png", 10, 8, 33)
+    
+    pdf.set_y(10)
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Suresh Kumar", ln=True, align='C')
-    pdf.cell(0, 5, txt="Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     pdf.ln(5)
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 8, txt="Sales Invoice / Ledger Statement", ln=True, align='C')
+    
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, txt="Partner Ledger Statement", ln=True, align='C')
+    
+    pdf.set_line_width(0.5)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(5)
     
     # --- CUSTOMER DETAILS SECTION ---
-    # Left Side: Customer Info
+    # Customer & Date logic
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(25, 6, "Customer:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(100, 6, str(party_name), 'B', 0) # Name with underline
+    pdf.cell(100, 6, str(party_name), 0, 0)
     
-    # Right Side: Date
+    y_line = pdf.get_y() + 6
+    pdf.line(35, y_line, 130, y_line) # Underline Name
+    
+    pdf.set_x(140)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(15, 6, "Date:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, datetime.now().strftime('%d-%m-%Y'), 'B', 1)
+    pdf.cell(30, 6, datetime.now().strftime('%d-%m-%Y'), 0, 1)
     
-    # Line 2: Address
+    pdf.line(155, y_line, 195, y_line) # Underline Date
+    pdf.ln(2)
+    
+    # Address logic
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(25, 6, "Address:", 0, 0)
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 6, str(c_address), 0, 1)
     
-    # Line 3: NIC & Mobile
+    y_line2 = pdf.get_y()
+    pdf.line(35, y_line2, 195, y_line2) # Underline Address
+    pdf.ln(2)
+    
+    # NIC & Mobile logic
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(25, 6, "NIC #:", 0, 0)
     pdf.set_font("Arial", size=10)
     pdf.cell(60, 6, str(c_nic), 0, 0)
     
+    y_line3 = pdf.get_y() + 6
+    pdf.line(35, y_line3, 90, y_line3) # Underline NIC
+    
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(20, 6, "Mobile #:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, str(c_phone), 'B', 1)
+    pdf.cell(0, 6, str(c_phone), 0, 1)
     
-    pdf.ln(5)
+    pdf.line(115, y_line3, 195, y_line3) # Underline Mobile
+    pdf.ln(10) # Added spacing after Customer info
     
     # --- TABLE HEADER ---
     pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Arial", 'B', 9)
-    # Adjusted Columns for Discount & Rate
-    # S#(8), Date(18), Item(45), Qty(10), Rate(18), Bill(23), Disc(15), Cash(23), Bal(28) => 188mm (Fine for A4)
+    pdf.set_font("Arial", 'B', 8)
     
-    pdf.cell(8, 8, "S#", 1, 0, 'C', 1)
-    pdf.cell(18, 8, "Date", 1, 0, 'C', 1)
-    pdf.cell(45, 8, "Item / Description", 1, 0, 'C', 1)
-    pdf.cell(10, 8, "Qty", 1, 0, 'C', 1)
-    pdf.cell(18, 8, "Rate", 1, 0, 'C', 1)
-    pdf.cell(23, 8, "Total Bill", 1, 0, 'C', 1)
-    pdf.cell(15, 8, "Discount", 1, 0, 'C', 1)
-    pdf.cell(23, 8, "Cash Received", 1, 0, 'C', 1)
-    pdf.cell(28, 8, "Balance", 1, 1, 'C', 1)
+    x_start = 10
+    # Column Widths (Must sum to 190mm)
+    w_sn, w_dt, w_ref, w_desc, w_qty, w_rate, w_tot, w_disc, w_cash, w_bal = 7, 16, 24, 33, 9, 16, 20, 15, 23, 27
     
-    # --- TABLE ROWS ---
+    pdf.cell(w_sn, 8, "S#", 1, 0, 'C', 1)
+    pdf.cell(w_dt, 8, "Date", 1, 0, 'C', 1)
+    pdf.cell(w_ref, 8, "Ref #", 1, 0, 'C', 1)
+    pdf.cell(w_desc, 8, "Item / Description", 1, 0, 'C', 1)
+    pdf.cell(w_qty, 8, "Qty", 1, 0, 'C', 1)
+    pdf.cell(w_rate, 8, "Rate", 1, 0, 'C', 1)
+    pdf.cell(w_tot, 8, "Total Bill", 1, 0, 'C', 1)
+    pdf.cell(w_disc, 8, "Discount", 1, 0, 'C', 1)
+    pdf.cell(w_cash, 8, "Cash Received", 1, 0, 'C', 1)
+    pdf.cell(w_bal, 8, "Balance", 1, 1, 'C', 1)
+    
+    # --- DATA NORMALIZATION ---
+    ledger_data = ledger_df.to_dict('records') if isinstance(ledger_df, pd.DataFrame) else ledger_df
+    
+    for r in ledger_data:
+        d = r.get('date', '')
+        try: r['_date_obj'] = pd.to_datetime(d).date()
+        except: r['_date_obj'] = pd.to_datetime('1900-01-01').date()
+        r['_date_str'] = str(d)
+        r['_ref'] = str(r.get('ref_no', ''))
+        
+        # Calculate row variables immediately for metrics
+        desc = str(r.get('description', '')).lower()
+        r['_desc_orig'] = str(r.get('description', ''))
+        r['_debit'] = float(r.get('debit', 0))
+        r['_credit'] = float(r.get('credit', 0))
+        r['_qty'] = float(r.get('quantity', 0))
+        r['_rate'] = float(r.get('rate', 0))
+        r['_disc'] = float(r.get('discount', 0))
+        r['_bal'] = float(r.get('Balance', 0))
+        
+    # --- SUMMARY CALCULATOR ---
+    total_sales_bill = 0.0
+    total_purchase_bill = 0.0
+    total_sales_return = 0.0
+    total_purchase_return = 0.0
+    total_cash_received = 0.0
+    starting_balance = float(prev_balance)
+
+    for r in ledger_data:
+        desc = str(r.get('description', '')).lower()
+        debit = float(r.get('debit', 0))
+        credit = float(r.get('credit', 0))
+        
+        if "opening balance" in desc or "opening" in desc:
+            starting_balance += (debit - credit)
+        elif "return" in desc:
+            if credit > 0: total_sales_return += credit
+            if debit > 0: total_purchase_return += debit
+        elif "cash" in desc or "payment" in desc or "paid" in desc or "rcvd" in desc or "received" in desc:
+            if credit > 0: total_cash_received += credit
+        else:
+            if "purchase" in desc or "ref #" in desc:
+                if credit > 0: total_purchase_bill += credit
+            else:
+                if debit > 0: total_sales_bill += debit
+
+    # Ensure chronological order for rendering (handled upstream, but let's be safe without breaking Balance order)
+    # The dataframe is already ordered correctly for Balance. Just group adjacent dates together.
+    from itertools import groupby
+    date_groups = []
+    # Group by consecutive identical dates to maintain relative order
+    for k, g in groupby(ledger_data, key=lambda x: x['_date_str']):
+        date_groups.append((k, list(g)))
+        
     pdf.set_font("Arial", size=8)
     idx_counter = 1
-    for _, row in ledger_df.iterrows():
-        # Handle date object
-        d_str = str(row['date'])
-        
-        pdf.cell(8, 6, str(idx_counter), 1, 0, 'C')
-        pdf.cell(18, 6, d_str, 1, 0, 'C')
-        
-        # Truncate Desc
-        desc_text = str(row['description'])
-        if len(desc_text) > 25: desc_text = desc_text[:23] + ".."
-        pdf.cell(45, 6, desc_text, 1, 0, 'L')
-        
-        # Quantity
-        qty_val = row.get('quantity', 0)
-        qty_str = str(int(qty_val)) if pd.notna(qty_val) and qty_val != 0 else "-"
-        pdf.cell(10, 6, qty_str, 1, 0, 'C')
-
-        # Rate
-        rate_val = row.get('rate', 0.0)
-        rate_str = f"{rate_val:,.0f}" if pd.notna(rate_val) and rate_val != 0 else "-"
-        pdf.cell(18, 6, rate_str, 1, 0, 'R')
-        
-        # Numbers
-        debit_val = row['debit']
-        discount_val = row.get('discount', 0.0)
-        credit_val = row['credit']
-        bal_val = row['Balance'] 
-        
-        pdf.cell(23, 6, f"{debit_val:,.0f}" if debit_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(15, 6, f"{discount_val:,.0f}" if discount_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(23, 6, f"{credit_val:,.0f}" if credit_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(28, 6, f"{bal_val:,.0f}", 1, 1, 'R')
-        
-        idx_counter += 1
-        
-    pdf.ln(2)
     
-    # --- TOTALS BOX ---
-    # Bottom Right
-    pdf.set_x(100) # Move to right half
-    pdf.set_font("Arial", 'B', 10)
+    def fmt(v):
+        if v == 0: return "-"
+        if v % 1 == 0: return f"{v:,.0f}"
+        return f"{v:,.2f}".rstrip('0').rstrip('.')
+        
+    # --- TABLE RENDERING ---
+    for date_str, rows in date_groups:
+        needed_h = len(rows) * 7
+        if pdf.get_y() + needed_h > 275:
+            pdf.add_page()
+            
+        group_start_y = pdf.get_y()
+        
+        for row in rows:
+            # Prepare Data
+            desc_text = row['_desc_orig']
+            qty = row['_qty']
+            rate = row['_rate']
+            debit = row['_debit']
+            credit = row['_credit']
+            disc = row['_disc']
+            ref_no = row['_ref']
+            bal_val = row['_bal']
+            
+            # --- MULTI-CELL LOGIC WITH PADDING ---
+            line_height = 5
+            eff_width = w_desc - 2
+            
+            # Use Arial 8 for calculations
+            estimated_lines = max(1, int(len(desc_text) / (eff_width / 2)) + 1)
+            
+            if pdf.get_y() + (estimated_lines * line_height) > 275:
+                # Close out the date box for the current page before jumping
+                current_y = pdf.get_y()
+                if current_y > group_start_y:
+                    date_x = x_start + w_sn
+                    pdf.set_xy(date_x, group_start_y)
+                    pdf.cell(w_dt, current_y - group_start_y, date_str, 1, 0, 'C')
+                
+                pdf.add_page()
+                group_start_y = pdf.get_y()
+                pdf.set_y(group_start_y)
+                
+            y_top = pdf.get_y()
+            x_desc_pos = x_start + w_sn + w_dt + w_ref
+            
+            # Draw Description Text
+            pdf.set_xy(x_desc_pos + 1, y_top + 1)
+            pdf.multi_cell(eff_width, line_height, desc_text, border=0, align='L')
+            y_bottom_text = pdf.get_y()
+            
+            text_height = y_bottom_text - (y_top + 1)
+            row_height = max(8, text_height + 3)
+            y_bottom = y_top + row_height
+            
+            # Draw Cells
+            pdf.set_y(y_top)
+            pdf.set_x(x_start)
+            pdf.cell(w_sn, row_height, str(idx_counter), 1, 0, 'C')
+            
+            # Place holder for Date
+            pdf.set_x(x_start + w_sn + w_dt)
+            # Ref #
+            pdf.cell(w_ref, row_height, ref_no if ref_no else "-", 1, 0, 'C')
+            
+            # Box Description
+            pdf.rect(x_desc_pos, y_top, w_desc, row_height)
+            
+            pdf.set_x(x_desc_pos + w_desc)
+            
+            qty_str = str(int(qty)) if qty != 0 else "-"
+            rate_str = fmt(rate)
+            
+            pdf.cell(w_qty, row_height, qty_str, 1, 0, 'C')
+            pdf.cell(w_rate, row_height, rate_str, 1, 0, 'R')
+            pdf.cell(w_tot, row_height, fmt(debit), 1, 0, 'R')
+            pdf.cell(w_disc, row_height, fmt(disc), 1, 0, 'R')
+            pdf.cell(w_cash, row_height, fmt(credit), 1, 0, 'R')
+            
+            # Balance column (allows negative formatting correctly)
+            bal_str = f"{bal_val:,.0f}" if bal_val % 1 == 0 else f"{bal_val:,.2f}"
+            pdf.cell(w_bal, row_height, bal_str, 1, 1, 'R')
+            
+            pdf.set_y(y_bottom)
+            idx_counter += 1
+            
+        group_end_y = pdf.get_y()
+        
+        # Draw the big Date cell
+        date_x = x_start + w_sn
+        height = group_end_y - group_start_y
+        if height > 0:
+            pdf.set_xy(date_x, group_start_y)
+            pdf.cell(w_dt, height, date_str, 1, 0, 'C')
+            pdf.set_xy(x_start, group_end_y)
+            
+        # Small gap between dates if possible, or just normal lines. 
+        pdf.ln(1)
+            
+    pdf.ln(10)
     
-    # Calculate totals
-    total_debit = ledger_df['debit'].sum()
-    total_credit = ledger_df['credit'].sum()
+    # --- SUMMARY BOX ---
+    pdf.set_font("Arial", 'B', 9)
+    # Left side metrics
+    pdf.set_x(10)
+    pdf.cell(40, 6, "Total Sales Bill:", 0, 0, 'L')
+    pdf.cell(40, 6, f"{total_sales_bill:,.0f}", 0, 0, 'R')
     
-    pdf.cell(50, 6, "Total Bill:", 0, 0, 'R')
-    pdf.cell(40, 6, f"{total_debit:,.0f}", 0, 1, 'R')
+    # Middle break
+    pdf.set_x(100)
+    bal_label = "Previous Balance:" if is_filtered else "Starting Balance:"
+    pdf.cell(45, 6, bal_label, 0, 0, 'R')
+    pdf.cell(40, 6, f"{starting_balance:,.0f}", 0, 1, 'R')
+    
+    pdf.set_x(10)
+    pdf.cell(40, 6, "Total Purchase Bill:", 0, 0, 'L')
+    pdf.cell(40, 6, f"{total_purchase_bill:,.0f}", 0, 0, 'R')
     
     pdf.set_x(100)
-    pdf.cell(50, 6, "Total Cash Received:", 0, 0, 'R')
-    pdf.cell(40, 6, f"{total_credit:,.0f}", 0, 1, 'R')
+    pdf.cell(45, 6, "Total Cash Received:", 0, 0, 'R')
+    pdf.cell(40, 6, f"{total_cash_received:,.0f}", 0, 1, 'R')
     
-    pdf.line(110, pdf.get_y()+1, 200, pdf.get_y()+1)
-    pdf.ln(2)
+    pdf.set_x(10)
+    pdf.cell(40, 6, "Total Sales Return:", 0, 0, 'L')
+    pdf.cell(40, 6, f"{total_sales_return:,.0f}", 0, 1, 'R')
+    
+    pdf.set_x(10)
+    pdf.cell(40, 6, "Total Purchase Return:", 0, 0, 'L')
+    pdf.cell(40, 6, f"{total_purchase_return:,.0f}", 0, 1, 'R')
+    
+    pdf.ln(5)
+    # Horizontal Rule
+    pdf.line(120, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
     
     pdf.set_x(100)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(50, 8, "Net Balance:", 0, 0, 'R')
+    pdf.cell(45, 8, "Net Balance:", 0, 0, 'R')
+    
+    pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, f"{final_balance:,.0f}", 1, 1, 'R', fill=True) 
     
+    # Amount in Words
+    pdf.ln(6)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(42, 6, "Amount (In Words):", 0, 0, 'L')
+    pdf.set_font("Arial", 'I', 10)
+    word_str = f"{num_to_words(int(abs(final_balance)))} Rupees Only"
+    pdf.cell(0, 6, word_str, 0, 1)
+    
+    # Underline the words
+    pdf.ln(2)
+    pdf.set_line_width(0.3)
+    pdf.line(10, pdf.get_y(), 195, pdf.get_y())
+    pdf.set_line_width(0.2)
+
+    # Remarks
+    pdf.ln(6)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 6, "Remarks:", 0, 1, 'L')
+    
+    # Remarks empty box
+    pdf.set_font("Arial", size=10)
+    # Using a 180w x 15h rectangle for remarks text
+    pdf.rect(10, pdf.get_y(), 185, 15)
+    pdf.ln(15) # Skip past the created rectangle
+
     pdf.ln(15)
     
-    # Signatures (Relative positioning to avoid Page 2 drift)
-    # Check Y position, if too low, add page
+    # Signatures
     if pdf.get_y() > 250:
         pdf.add_page()
         
-    pdf.set_font("Arial", 'B', 9)
-    pdf.cell(90, 10, "Prepared By: _________________", 0, 0, 'L')
-    pdf.cell(0, 10, "Receiver Signature: _________________", 0, 1, 'R')
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(90, 6, "Authorized By", 0, 0, 'L')
+    pdf.cell(0, 6, "Vendor / Client Signature", 0, 1, 'R')
+    pdf.ln(8)
+    pdf.cell(90, 6, "________________________", 0, 0, 'L')
+    pdf.cell(0, 6, "________________________", 0, 1, 'R')
     
     return pdf.output(dest='S').encode('latin-1')
 
@@ -3555,11 +3734,12 @@ elif menu == "👥 Partners & Ledger":
                  ledger_df['id'] = range(len(ledger_df)) # Fallback
             
             # Update View Columns
-            display_df = ledger_df[['id', 'date', 'description', 'quantity', 'rate', 'discount', 'debit', 'credit', 'Balance']].copy()
+            display_df = ledger_df[['id', 'date', 'ref_no', 'description', 'quantity', 'rate', 'discount', 'debit', 'credit', 'Balance']].copy()
             
             st.dataframe(display_df, width="stretch", height=400, 
                          column_config={
                              "id": st.column_config.TextColumn("ID", width="small"),
+                             "ref_no": st.column_config.TextColumn("Ref #", width="small"),
                              "quantity": st.column_config.NumberColumn("Qty", format="%d"),
                              "rate": st.column_config.NumberColumn("Price", format="Rs. %.0f"),
                              "discount": st.column_config.NumberColumn("Discount", format="Rs. %.0f"),
@@ -3583,9 +3763,61 @@ elif menu == "👥 Partners & Ledger":
             st.markdown(f"""<div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:1px solid {curr_color}; text-align:right;"><div class="sub-text">Total Pending Balance</div><div style="font-size:2.5rem; font-weight:bold; color:{curr_color}">Rs. {final_bal:,.2f}</div></div>""", unsafe_allow_html=True)
             
             st.write("")
-            if st.button("🖨️ Download Statement (PDF)"):
-                 pdf_data = create_ledger_pdf(current_party, ledger_df, final_bal)
-                 st.download_button("📥 Click to Download PDF", data=pdf_data, file_name=f"Ledger_{current_party}.pdf", mime="application/pdf")
+            st.markdown("### 📥 Download Statement")
+            
+            filter_opt = st.selectbox("Select Time Period", ["All Time", "Last 7 Days", "Last 30 Days", "Last 3 Months", "Last 6 Months", "Last 1 Year", "Custom Date Range"], key=f"dl_opt_{current_party}")
+            
+            dl_start, dl_end = None, None
+            if filter_opt == "Custom Date Range":
+                col_sd, col_ed = st.columns(2)
+                with col_sd: dl_start = st.date_input("Start Date", key=f"sd_{current_party}")
+                with col_ed: dl_end = st.date_input("End Date", key=f"ed_{current_party}")
+            
+            if st.button("Generate PDF Statement", key=f"gen_pdf_{current_party}"):
+                with st.spinner("Compiling Ledger..."):
+                    today = datetime.now().date()
+                    
+                    if filter_opt == "Last 7 Days":
+                        dl_start = today - timedelta(days=7)
+                        dl_end = today
+                    elif filter_opt == "Last 30 Days":
+                        dl_start = today - timedelta(days=30)
+                        dl_end = today
+                    elif filter_opt == "Last 3 Months":
+                        dl_start = today - timedelta(days=90)
+                        dl_end = today
+                    elif filter_opt == "Last 6 Months":
+                        dl_start = today - timedelta(days=180)
+                        dl_end = today
+                    elif filter_opt == "Last 1 Year":
+                        dl_start = today - timedelta(days=365)
+                        dl_end = today
+                        
+                    filtered_df = ledger_df.copy()
+                    is_filtered = False
+                    prev_bal = 0.0
+                    
+                    if filter_opt != "All Time" and dl_start and dl_end:
+                        is_filtered = True
+                        # Remove hardcoded format so Pandas can infer YYYY-MM-DD automatically
+                        filtered_df['date_obj'] = pd.to_datetime(filtered_df['date'], errors='coerce')
+                        
+                        dl_start_ts = pd.to_datetime(dl_start)
+                        dl_end_ts = pd.to_datetime(dl_end)
+                        
+                        # Get previous balance
+                        past_df = filtered_df[filtered_df['date_obj'] < dl_start_ts]
+                        if not past_df.empty:
+                            prev_bal = past_df.iloc[-1]['Balance']
+                            
+                        filtered_df = filtered_df[(filtered_df['date_obj'] >= dl_start_ts) & (filtered_df['date_obj'] <= dl_end_ts)]
+                        filtered_df = filtered_df.drop(columns=['date_obj'])
+                        
+                    if filtered_df.empty:
+                        st.warning("No transactions found in this date range.")
+                    else:
+                        pdf_data = create_ledger_pdf(current_party, filtered_df, final_bal, is_filtered=is_filtered, prev_balance=prev_bal)
+                        st.download_button("📥 Click Here to Download PDF", data=pdf_data, file_name=f"Ledger_{current_party}_{filter_opt.replace(' ', '_')}.pdf", mime="application/pdf")
 
         else:
             st.info("No transactions found for this party.")
