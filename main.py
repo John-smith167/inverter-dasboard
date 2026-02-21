@@ -448,7 +448,7 @@ def create_ledger_pdf(party_name, ledger_df, final_balance, is_filtered=False, p
             
             pdf.set_x(x_desc_pos + w_desc)
             
-            qty_str = str(int(qty)) if qty != 0 else "-"
+            qty_str = f"{qty:g}" if qty != 0 else "-"
             rate_str = fmt(rate)
             
             pdf.cell(w_qty, row_height, qty_str, 1, 0, 'C')
@@ -484,29 +484,28 @@ def create_ledger_pdf(party_name, ledger_df, final_balance, is_filtered=False, p
     # Left side metrics
     pdf.set_x(10)
     pdf.cell(40, 6, "Total Sales Bill:", 0, 0, 'L')
-    pdf.cell(40, 6, f"{total_sales_bill:,.0f}", 0, 0, 'R')
+    pdf.cell(40, 6, f"{total_sales_bill:,.2f}".rstrip('0').rstrip('.'), 0, 0, 'R')
     
-    # Middle break
     pdf.set_x(100)
     bal_label = "Previous Balance:" if is_filtered else "Starting Balance:"
     pdf.cell(45, 6, bal_label, 0, 0, 'R')
-    pdf.cell(40, 6, f"{starting_balance:,.0f}", 0, 1, 'R')
+    pdf.cell(40, 6, f"{starting_balance:,.2f}".rstrip('0').rstrip('.'), 0, 1, 'R')
     
     pdf.set_x(10)
     pdf.cell(40, 6, "Total Purchase Bill:", 0, 0, 'L')
-    pdf.cell(40, 6, f"{total_purchase_bill:,.0f}", 0, 0, 'R')
+    pdf.cell(40, 6, f"{total_purchase_bill:,.2f}".rstrip('0').rstrip('.'), 0, 0, 'R')
     
     pdf.set_x(100)
     pdf.cell(45, 6, "Total Cash Received:", 0, 0, 'R')
-    pdf.cell(40, 6, f"{total_cash_received:,.0f}", 0, 1, 'R')
+    pdf.cell(40, 6, f"{total_cash_received:,.2f}".rstrip('0').rstrip('.'), 0, 1, 'R')
     
     pdf.set_x(10)
     pdf.cell(40, 6, "Total Sales Return:", 0, 0, 'L')
-    pdf.cell(40, 6, f"{total_sales_return:,.0f}", 0, 1, 'R')
+    pdf.cell(40, 6, f"{total_sales_return:,.2f}".rstrip('0').rstrip('.'), 0, 1, 'R')
     
     pdf.set_x(10)
     pdf.cell(40, 6, "Total Purchase Return:", 0, 0, 'L')
-    pdf.cell(40, 6, f"{total_purchase_return:,.0f}", 0, 1, 'R')
+    pdf.cell(40, 6, f"{total_purchase_return:,.2f}".rstrip('0').rstrip('.'), 0, 1, 'R')
     
     pdf.ln(5)
     # Horizontal Rule
@@ -518,7 +517,7 @@ def create_ledger_pdf(party_name, ledger_df, final_balance, is_filtered=False, p
     pdf.cell(45, 8, "Net Balance:", 0, 0, 'R')
     
     pdf.set_fill_color(240, 240, 240)
-    pdf.cell(40, 8, f"{final_balance:,.0f}", 1, 1, 'R', fill=True) 
+    pdf.cell(40, 8, f"{final_balance:,.2f}".rstrip('0').rstrip('.'), 1, 1, 'R', fill=True) 
     
     # Amount in Words
     pdf.ln(6)
@@ -3694,9 +3693,9 @@ elif menu == "👥 Partners & Ledger":
 
              # 1. Row 1: Qty & Rate & Discount
              c1, c2, c3 = st.columns(3)
-             c1.number_input("Quantity (Optional)", min_value=0, step=1, key=f"q_{current_party}", on_change=update_calc)
-             c2.number_input("Rate / Price per Item", min_value=0.0, step=10.0, key=f"r_{current_party}", on_change=update_calc)
-             c3.number_input("Discount", min_value=0.0, step=10.0, key=f"disc_{current_party}", on_change=update_calc)
+             c1.number_input("Quantity (Optional)", min_value=0.0, step=0.01, key=f"q_{current_party}", on_change=update_calc)
+             c2.number_input("Rate / Price per Item", min_value=0.0, step=0.01, key=f"r_{current_party}", on_change=update_calc)
+             c3.number_input("Discount", min_value=0.0, step=0.01, key=f"disc_{current_party}", on_change=update_calc)
              
              # 2. Row 2: Bill & Cash
              c4, c5 = st.columns(2)
@@ -3705,8 +3704,8 @@ elif menu == "👥 Partners & Ledger":
              lbl_bill = "Total Payable (Credit)" if is_purchase_txn else "Values for Total Bill (Debit)"
              lbl_cash = "Cash Paid (Debit)" if is_purchase_txn else "Cash Received (Credit)"
              
-             c4.number_input(lbl_bill, min_value=0.0, step=100.0, key=f"bill_{current_party}")
-             c5.number_input(lbl_cash, min_value=0.0, step=100.0, key=f"cash_{current_party}")
+             c4.number_input(lbl_bill, min_value=0.0, step=0.01, key=f"bill_{current_party}")
+             c5.number_input(lbl_cash, min_value=0.0, step=0.01, key=f"cash_{current_party}")
 
              # 3. Row 3: Meta
              c6, c7 = st.columns([1, 2])
@@ -3740,12 +3739,12 @@ elif menu == "👥 Partners & Ledger":
                          column_config={
                              "id": st.column_config.TextColumn("ID", width="small"),
                              "ref_no": st.column_config.TextColumn("Ref #", width="small"),
-                             "quantity": st.column_config.NumberColumn("Qty", format="%d"),
-                             "rate": st.column_config.NumberColumn("Price", format="Rs. %.0f"),
-                             "discount": st.column_config.NumberColumn("Discount", format="Rs. %.0f"),
-                             "debit": st.column_config.NumberColumn("Total Bill", format="Rs. %.0f"),
-                             "credit": st.column_config.NumberColumn("Cash Received", format="Rs. %.0f"),
-                             "Balance": st.column_config.NumberColumn("Outstanding Balance", format="Rs. %.0f"),
+                             "quantity": st.column_config.NumberColumn("Qty", format="%g"),
+                             "rate": st.column_config.NumberColumn("Price", format="Rs. %.2f"),
+                             "discount": st.column_config.NumberColumn("Amount Paid", format="Rs. %.2f"),
+                             "debit": st.column_config.NumberColumn("Total Due (Labor)", format="Rs. %.2f"),
+                             "credit": st.column_config.NumberColumn("Amount Paid/Rcvd", format="Rs. %.2f"),
+                             "Balance": st.column_config.NumberColumn("Outstanding Balance", format="Rs. %.2f"),
                          })
             
             # Delete Section
@@ -3956,9 +3955,9 @@ elif menu == "👷 Staff & Payroll":
                              "date": "Date",
                              "type": "Type",
                              "description": "Description",
-                             "earned": st.column_config.NumberColumn("Earned", format="Rs. %.0f"),
-                             "paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
-                             "Balance": st.column_config.NumberColumn("Balance", format="Rs. %.0f"),
+                             "earned": st.column_config.NumberColumn("Earned", format="Rs. %.2f"),
+                             "paid": st.column_config.NumberColumn("Paid", format="Rs. %.2f"),
+                             "Balance": st.column_config.NumberColumn("Balance", format="Rs. %.2f"),
                          })
             
             # Delete Section
