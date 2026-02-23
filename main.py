@@ -3546,7 +3546,9 @@ elif menu == "👥 Partners & Ledger":
              # TOGGLE FOR STOCK ITEM (Correctly placed outside callback)
              col_txn_type, col_stock_check = st.columns([1, 1])
              with col_txn_type:
-                 txn_mode = st.radio("Transaction Mode", ["Sale (Bill)", "Purchase (Stock In)"], horizontal=True, key=f"txn_mode_{current_party}")
+                 txn_mode = st.selectbox("Transaction Mode", 
+                     ["Sale (Bill)", "Purchase (Stock In)", "Sale Return", "Purchase Return", "Cash Received", "Cash Paid"], 
+                     key=f"txn_mode_{current_party}")
              with col_stock_check:
                  st.write("")
                  st.write("")
@@ -3583,8 +3585,12 @@ elif menu == "👥 Partners & Ledger":
                   # Retrieve Stock Selection & Mode from State
                   is_stock_val = st.session_state.get(f"is_stock_{current_party}", False)
                   sel_prod_label = st.session_state.get(f"sel_stock_{current_party}", "Choose...")
-                  txn_mode_val = st.session_state.get(f"txn_mode_{current_party}", "Sale")
-                  is_pur = "Purchase" in txn_mode_val
+                  txn_mode_val = st.session_state.get(f"txn_mode_{current_party}", "Sale (Bill)")
+                  is_pur = txn_mode_val == "Purchase (Stock In)"
+                  is_sale_ret = txn_mode_val == "Sale Return"
+                  is_pur_ret = txn_mode_val == "Purchase Return"
+                  is_cash_rec = txn_mode_val == "Cash Received"
+                  is_cash_paid = txn_mode_val == "Cash Paid"
 
                   # Extract Item Name from Label "Name (Stock: X)"
                   selected_item_name = None
@@ -3607,67 +3613,75 @@ elif menu == "👥 Partners & Ledger":
                   
                   entries_added = 0
                   
-                  # 1. Process BILL
-                  # Sale: Bill = Debit (They owe us)
-                  # Purchase: Bill = Credit (We owe them)
-                  if bill_amt > 0:
-                      bill_desc = desc_val if desc_val else "Bill"
+                  # 1. Process BILL or ITEM MOVEMENT
+                  # Returns behave inversely to normal bills
+                  if bill_amt > 0 and not (is_cash_rec or is_cash_paid):
+                      bill_desc = desc_val if desc_val else "Item"
                       
-                      # Prefix for Purchase
-                      if is_pur:
-                          bill_desc = f"Purchase: {bill_desc}"
+                      # Tagging logic based on mode
+                      prefix_tag = ""
+                      if is_pur: prefix_tag = "Purchase"
+                      elif is_sale_ret: prefix_tag = "Sale Return"
+                      elif is_pur_ret: prefix_tag = "Purchase Return"
+                      else: prefix_tag = "Sale"
                       
                       # Inventory & Description Logic
                       if selected_item_name:
-                          # Override description if empty
                           if not desc_val: 
-                              bill_desc = f"{'Purchase' if is_pur else 'Sale'}: '{selected_item_name}'"
+                              bill_desc = f"{prefix_tag}: '{selected_item_name}'"
                           else:
-                               # Append Item
-                               bill_desc = f"{bill_desc} ({selected_item_name})"
+                               bill_desc = f"{prefix_tag}: {bill_desc} ({selected_item_name})"
+                      else:
+                          if not desc_val.startswith(prefix_tag):
+                              bill_desc = f"{prefix_tag}: {bill_desc}"
                           
-                          # --- INVENTORY ADJUSTMENT ---
-                          # Sale: Deduct
-                          # Purchase: Add
+                      # --- INVENTORY ADJUSTMENT ---
+                      if selected_item_name:
                           delta = 0
-                          if is_pur:
+                          if is_pur or is_sale_ret:
                               delta = q_curr # Increase Stock
-                          else:
+                          elif is_pur_ret or prefix_tag == "Sale":
                               delta = -q_curr # Decrease Stock
                               
                           if delta != 0:
                               db.adjust_inventory_quantity(selected_item_name, delta)
                                
                       # Determine Debit/Credit based on Mode
-                      if is_pur:
-                          # Purchase: Credit the party (We owe)
+                      if is_pur or is_sale_ret:
+                          # We receive goods (Purchase) or get goods back (Sale Return) -> Credit the party (We owe them / Their balance increases)
                           db.add_ledger_entry(current_party, bill_desc, 0.0, bill_amt, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr, ref_no=ref_val)
                       else:
-                          # Sale: Debit the party (They owe)
+                          # We give goods (Sale) or return goods (Purchase Return) -> Debit the party (They owe us / Their balance decreases)
                           db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr, ref_no=ref_val)
                           
                       entries_added += 1
                       
                   # 2. Process CASH / PAYMENT
-                  # Sale: Cash Received = Credit (They paid us)
-                  # Purchase: Cash Paid = Debit (We paid them)
-                  if cash_amt > 0:
-                      cash_desc = "Cash Paid" if is_pur else "Cash Received"
-                      # If both added, maybe clarify description
-                      if bill_amt > 0 and desc_val:
-                           cash_desc = f"Payment for: {desc_val}"
-                      elif desc_val:
-                           cash_desc = desc_val
-                           if is_pur and not cash_desc.startswith("Payment"): cash_desc = f"Paid: {cash_desc}"
+                  if cash_amt > 0 or is_cash_rec or is_cash_paid:
+                      cash_to_process = cash_amt
+                      # If user selected pure cash mode but used the "Bill" field to enter amount
+                      if (is_cash_rec or is_cash_paid) and bill_amt > 0 and cash_amt == 0:
+                           cash_to_process = bill_amt
                            
-                      if is_pur:
-                          # We paid them -> Debit them (Reduces liability)
-                          db.add_ledger_entry(current_party, cash_desc, cash_amt, 0.0, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
-                      else:
-                          # They paid us -> Credit them (Reduces asset)
-                          db.add_ledger_entry(current_party, cash_desc, 0.0, cash_amt, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
+                      if cash_to_process > 0:
+                          cash_desc = txn_mode_val if (is_cash_rec or is_cash_paid) else ("Cash Paid" if is_pur else "Cash Received")
                           
-                      entries_added += 1
+                          # If both added, maybe clarify description
+                          if bill_amt > 0 and desc_val and not (is_cash_rec or is_cash_paid):
+                               cash_desc = f"Payment for: {desc_val}"
+                          elif desc_val:
+                               cash_desc = desc_val
+                               if not cash_desc.startswith("Payment") and not cash_desc.startswith("Cash"): 
+                                   cash_desc = f"Cash: {cash_desc}"
+                               
+                          if is_pur or is_pur_ret or is_cash_paid:
+                              # We paid them -> Debit them (Reduces liability)
+                              db.add_ledger_entry(current_party, cash_desc, cash_to_process, 0.0, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
+                          else:
+                              # They paid us -> Credit them (Reduces asset)
+                              db.add_ledger_entry(current_party, cash_desc, 0.0, cash_to_process, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
+                              
+                          entries_added += 1
                   
                   if entries_added > 0:
                       st.session_state['tx_msg'] = ('success', "Transaction Recorded Successfully!")
@@ -3703,8 +3717,19 @@ elif menu == "👥 Partners & Ledger":
              c4, c5 = st.columns(2)
              
              # Dynamic Labels based on Mode
-             lbl_bill = "Total Payable (Credit)" if is_purchase_txn else "Values for Total Bill (Debit)"
-             lbl_cash = "Cash Paid (Debit)" if is_purchase_txn else "Cash Received (Credit)"
+             is_pure_cash = txn_mode in ["Cash Received", "Cash Paid"]
+             is_pure_return = txn_mode in ["Sale Return", "Purchase Return"]
+             is_pur_based = txn_mode in ["Purchase (Stock In)", "Sale Return", "Cash Received"] # They owe us less / we owe them more
+             
+             if is_pure_cash:
+                 lbl_bill = "Amount (Use if Qty/Rate 0)"
+                 lbl_cash = "Amount Paid/Received"
+             elif is_pure_return:
+                 lbl_bill = "Total Return Value (Credit)" if txn_mode == "Sale Return" else "Total Return Value (Debit)"
+                 lbl_cash = "Cash Refunded"
+             else:
+                 lbl_bill = "Total Payable (Credit)" if is_purchase_txn else "Values for Total Bill (Debit)"
+                 lbl_cash = "Cash Paid (Debit)" if is_purchase_txn else "Cash Received (Credit)"
              
              c4.number_input(lbl_bill, min_value=0.0, step=0.01, key=f"bill_{current_party}")
              c5.number_input(lbl_cash, min_value=0.0, step=0.01, key=f"cash_{current_party}")
