@@ -3578,6 +3578,7 @@ elif menu == "👥 Partners & Ledger":
              def add_transaction_callback():
                   d_val = st.session_state.get(f"d_{current_party}")
                   desc_val = st.session_state.get(f"desc_{current_party}", "")
+                  ref_val = st.session_state.get(f"ref_{current_party}", "")
                   
                   # Retrieve Stock Selection & Mode from State
                   is_stock_val = st.session_state.get(f"is_stock_{current_party}", False)
@@ -3640,10 +3641,10 @@ elif menu == "👥 Partners & Ledger":
                       # Determine Debit/Credit based on Mode
                       if is_pur:
                           # Purchase: Credit the party (We owe)
-                          db.add_ledger_entry(current_party, bill_desc, 0.0, bill_amt, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
+                          db.add_ledger_entry(current_party, bill_desc, 0.0, bill_amt, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr, ref_no=ref_val)
                       else:
                           # Sale: Debit the party (They owe)
-                          db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
+                          db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr, ref_no=ref_val)
                           
                       entries_added += 1
                       
@@ -3661,10 +3662,10 @@ elif menu == "👥 Partners & Ledger":
                            
                       if is_pur:
                           # We paid them -> Debit them (Reduces liability)
-                          db.add_ledger_entry(current_party, cash_desc, cash_amt, 0.0, d_val, quantity=0, rate=0.0, discount=0.0)
+                          db.add_ledger_entry(current_party, cash_desc, cash_amt, 0.0, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
                       else:
                           # They paid us -> Credit them (Reduces asset)
-                          db.add_ledger_entry(current_party, cash_desc, 0.0, cash_amt, d_val, quantity=0, rate=0.0, discount=0.0)
+                          db.add_ledger_entry(current_party, cash_desc, 0.0, cash_amt, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
                           
                       entries_added += 1
                   
@@ -3677,6 +3678,7 @@ elif menu == "👥 Partners & Ledger":
                       st.session_state[f"bill_{current_party}"] = 0.0
                       st.session_state[f"cash_{current_party}"] = 0.0
                       st.session_state[f"desc_{current_party}"] = ""
+                      st.session_state[f"ref_{current_party}"] = db.get_next_manual_ref_number()
                       # Reset Stock Toggle if desired? Maybe keep it.
                       # st.session_state[f"is_stock_{current_party}"] = False 
                   else:
@@ -3708,9 +3710,14 @@ elif menu == "👥 Partners & Ledger":
              c5.number_input(lbl_cash, min_value=0.0, step=0.01, key=f"cash_{current_party}")
 
              # 3. Row 3: Meta
-             c6, c7 = st.columns([1, 2])
+             c6, c7, c8 = st.columns([1, 2, 1])
+             
+             if f"ref_{current_party}" not in st.session_state or not st.session_state[f"ref_{current_party}"]:
+                 st.session_state[f"ref_{current_party}"] = db.get_next_manual_ref_number()
+
              c6.date_input("Date", key=f"d_{current_party}")
              c7.text_input("Description (e.g. Item Name)", key=f"desc_{current_party}")
+             c8.text_input("Ref # (Optional)", key=f"ref_{current_party}")
              
              st.button("Save Transaction", type="primary", on_click=add_transaction_callback)
 
@@ -3755,6 +3762,18 @@ elif menu == "👥 Partners & Ledger":
                      st.success(f"Deleted Transaction ID {del_id}")
                      time.sleep(1)
                      st.rerun()
+                     
+                st.divider()
+                st.markdown("#### ✏️ Update Reference Number")
+                edit_id = st.number_input("Enter Transaction ID to Update Ref #", min_value=1, step=1, key=f"edit_led_{current_party}")
+                new_ref = st.text_input("New Reference Number", key=f"new_ref_{current_party}")
+                if st.button("Update Ref #", type="primary", key=f"btn_edit_ref_{current_party}"):
+                     if db.update_ledger_ref(edit_id, new_ref):
+                         st.success(f"Updated Transaction ID {edit_id} with Ref #{new_ref}")
+                         time.sleep(1)
+                         st.rerun()
+                     else:
+                         st.error(f"Transaction ID {edit_id} not found.")
             
             final_bal = ledger_df.iloc[-1]['Balance']
             curr_color = "#f7768e" if final_bal > 0 else "#9ece6a" 

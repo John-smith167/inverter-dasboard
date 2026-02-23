@@ -709,7 +709,10 @@ class DatabaseManager:
                 
                 # Cash?
                 if cash_recv > 0:
-                     self.add_ledger_entry(customer_name, "Cash Received", 0.0, cash_recv, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Received"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash", "Sale"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, 0.0, cash_recv, date_val, ref_no=invoice_id)
 
             # 2. PURCHASE
             elif txn_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
@@ -719,10 +722,16 @@ class DatabaseManager:
 
                 # Cash Paid?
                 if cash_paid > 0:
-                     self.add_ledger_entry(customer_name, "Cash Paid", cash_paid, 0.0, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Paid"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash", "Purchase"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, cash_paid, 0.0, date_val, ref_no=invoice_id)
                 elif cash_recv > 0 and cash_paid == 0:
                      # Fallback if mapped to cash_recv column
-                     self.add_ledger_entry(customer_name, "Cash Paid", cash_recv, 0.0, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Paid"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash", "Purchase"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, cash_recv, 0.0, date_val, ref_no=invoice_id)
 
             # 3. SALE RETURN
             elif txn_type in ["Sale Return", "Return"]:
@@ -732,7 +741,10 @@ class DatabaseManager:
                 
                 # If we paid cash back? (Unlikely in batch, but check)
                 if cash_paid > 0:
-                    self.add_ledger_entry(customer_name, "Cash Refund", cash_paid, 0.0, date_val, ref_no=invoice_id)
+                    cash_desc = "Cash Refund"
+                    if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash", "Sale Return"]: cash_desc += f" - {item_name}"
+                    if description: cash_desc += f" - {description}"
+                    self.add_ledger_entry(customer_name, cash_desc, cash_paid, 0.0, date_val, ref_no=invoice_id)
 
             # 4. PURCHASE RETURN
             elif txn_type in ["Purchase Return", "Return Item"]:
@@ -743,18 +755,30 @@ class DatabaseManager:
             # 5. CASH ONLY (Standalone)
             elif txn_type == "Cash Received":
                  if cash_recv > 0:
-                     self.add_ledger_entry(customer_name, "Cash Received", 0.0, cash_recv, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Received"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, 0.0, cash_recv, date_val, ref_no=invoice_id)
             
             elif txn_type == "Cash Paid":
                  if cash_paid > 0:
-                     self.add_ledger_entry(customer_name, "Cash Paid", cash_paid, 0.0, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Paid"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, cash_paid, 0.0, date_val, ref_no=invoice_id)
             
             elif txn_type == "Cash":
                  # Ambiguous ? Use column text
                  if cash_recv > 0:
-                     self.add_ledger_entry(customer_name, "Cash Received", 0.0, cash_recv, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Received"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, 0.0, cash_recv, date_val, ref_no=invoice_id)
                  if cash_paid > 0:
-                     self.add_ledger_entry(customer_name, "Cash Paid", cash_paid, 0.0, date_val, ref_no=invoice_id)
+                     cash_desc = "Cash Paid"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, cash_paid, 0.0, date_val, ref_no=invoice_id)
 
         # Save updates
         if sales_rows:
@@ -1074,6 +1098,44 @@ class DatabaseManager:
             # Assuming ID is int as per _get_next_id
             df = df[df['id'] != entry_id]
             self._write_data("Ledger", df)
+
+    def update_ledger_ref(self, entry_id, new_ref):
+        df = self._read_data("Ledger")
+        if not df.empty:
+            if 'id' in df.columns:
+                mask = df['id'] == entry_id
+                if mask.any():
+                    if 'ref_no' not in df.columns:
+                        df['ref_no'] = ""
+                    df.loc[mask, 'ref_no'] = str(new_ref)
+                    self._write_data("Ledger", df)
+                    return True
+        return False
+
+    def get_next_manual_ref_number(self):
+        """
+        Generates the next Manual Reference # based on Ledger data.
+        Format: TRX-YYYY-XXX (e.g., TRX-2026-001)
+        """
+        df = self._read_data("Ledger")
+        year = datetime.now().year
+        prefix = f"TRX-{year}-"
+        
+        if df.empty or 'ref_no' not in df.columns:
+            return f"{prefix}001"
+            
+        refs = df['ref_no'].dropna().astype(str)
+        current_year_refs = refs[refs.str.startswith(prefix)]
+        
+        if current_year_refs.empty:
+            return f"{prefix}001"
+            
+        try:
+             max_num = current_year_refs.apply(lambda x: int(x.split('-')[-1])).max()
+             next_num = max_num + 1
+             return f"{prefix}{next_num:03d}"
+        except:
+             return f"{prefix}001"
 
     def get_all_ledger_parties(self):
         # Ledger Parties + Repair Clients + Customers Directory
