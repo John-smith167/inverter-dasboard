@@ -224,12 +224,12 @@ def create_ledger_pdf(party_name, ledger_df, final_balance, is_filtered=False, p
         s_val = str(val).strip() if pd.notna(val) else ""
         if s_val.endswith(".0"): s_val = s_val[:-2] # Remove decimal from IDs/Phones
         if s_val.lower() == "nan" or s_val == "":
-            return "_" * line_len
+            return ""
         return s_val
 
-    c_address = get_val_or_line(c_row.get('address'), 50) if c_row is not None else "_"*50
-    c_nic = get_val_or_line(c_row.get('nic'), 20) if c_row is not None else "_"*20
-    c_phone = get_val_or_line(c_row.get('phone'), 20) if c_row is not None else "_"*20
+    c_address = get_val_or_line(c_row.get('address'), 50) if c_row is not None else ""
+    c_nic = get_val_or_line(c_row.get('nic'), 20) if c_row is not None else ""
+    c_phone = get_val_or_line(c_row.get('phone'), 20) if c_row is not None else ""
     
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
@@ -593,11 +593,11 @@ def create_employee_payroll_pdf(employee_name, ledger_df, final_balance):
     def get_val_or_line(val, line_len=20):
         s_val = str(val).strip() if pd.notna(val) else ""
         if s_val.lower() == "nan" or s_val == "":
-            return "_" * line_len
+            return ""
         return s_val
 
-    e_phone = get_val_or_line(e_row.get('phone'), 20) if e_row is not None else "_"*20
-    e_cnic = get_val_or_line(e_row.get('cnic'), 25) if e_row is not None else "_"*25
+    e_phone = get_val_or_line(e_row.get('phone'), 20) if e_row is not None else ""
+    e_cnic = get_val_or_line(e_row.get('cnic'), 25) if e_row is not None else ""
     
     # Employee Info Section
     pdf.ln(5)
@@ -1345,30 +1345,27 @@ def create_stock_valuation_pdf(stock_df):
     pdf.set_fill_color(220, 220, 220)
     pdf.set_font("Arial", 'B', 10)
     
-    pdf.cell(10, 10, "#", 1, 0, 'C', 1)
-    pdf.cell(60, 10, "Item Name", 1, 0, 'C', 1)
-    pdf.cell(35, 10, "Category", 1, 0, 'C', 1)
+    pdf.cell(10, 10, "S#", 1, 0, 'C', 1)
+    pdf.cell(80, 10, "Item Name", 1, 0, 'C', 1)
     pdf.cell(20, 10, "Qty", 1, 0, 'C', 1)
     pdf.cell(30, 10, "Cost Price", 1, 0, 'C', 1)
     pdf.cell(30, 10, "Sell Price", 1, 0, 'C', 1)
-    pdf.cell(35, 10, "Total Cost", 1, 0, 'C', 1)
-    pdf.cell(35, 10, "Total Sales", 1, 1, 'C', 1)
+    pdf.cell(42, 10, "Total Cost", 1, 0, 'C', 1)
+    pdf.cell(43, 10, "Total Sales", 1, 1, 'C', 1)
     
     # Rows
     pdf.set_font("Arial", size=9)
     idx = 1
     for _, row in stock_df.iterrows():
-        item = str(row['item_name'])[:35]
-        cat = str(row['category'])[:20]
+        item = str(row['item_name'])[:40]
         
         pdf.cell(10, 8, str(idx), 1, 0, 'C')
-        pdf.cell(60, 8, item, 1, 0, 'L')
-        pdf.cell(35, 8, cat, 1, 0, 'L')
+        pdf.cell(80, 8, item, 1, 0, 'L')
         pdf.cell(20, 8, str(row['quantity']), 1, 0, 'C')
         pdf.cell(30, 8, f"{row['cost_price']:,.2f}", 1, 0, 'R')
         pdf.cell(30, 8, f"{row['selling_price']:,.2f}", 1, 0, 'R')
-        pdf.cell(35, 8, f"{row['Total Cost']:,.2f}", 1, 0, 'R')
-        pdf.cell(35, 8, f"{row['Total Selling']:,.2f}", 1, 1, 'R')
+        pdf.cell(42, 8, f"{row['Total Cost']:,.2f}", 1, 0, 'R')
+        pdf.cell(43, 8, f"{row['Total Selling']:,.2f}", 1, 1, 'R')
         idx += 1
         
     pdf.ln(5)
@@ -1493,7 +1490,7 @@ def render_stock_valuation_table(db_instance):
         
         # Display
         st.dataframe(
-            stock_inv[['id', 'item_name', 'category', 'quantity', 'cost_price', 'selling_price', 'Total Cost', 'Total Selling']],
+            stock_inv[['id', 'item_name', 'quantity', 'cost_price', 'selling_price', 'Total Cost', 'Total Selling']],
             width="stretch",
             column_config={
                 "cost_price": st.column_config.NumberColumn("Cost Price", format="Rs. %.2f"),
@@ -1547,40 +1544,48 @@ def create_inventory_ledger_pdf(item_name, item_history):
     
     # Table Config
     pdf.set_fill_color(220, 220, 220)
-    pdf.set_font("Arial", 'B', 10)
+    pdf.set_font("Arial", 'B', 8)
     
-    # Cols: Time(40), Type(25), Change(20), Ref(45), Desc(60)
-    pdf.cell(40, 10, "Date/Time", 1, 0, 'C', 1)
-    pdf.cell(25, 10, "Type", 1, 0, 'C', 1)
-    pdf.cell(20, 10, "Change", 1, 0, 'C', 1)
-    pdf.cell(45, 10, "Reference", 1, 0, 'C', 1)
-    pdf.cell(60, 10, "Description", 1, 1, 'C', 1)
+    # Cols: Date(40), Type(30), Client(50), Qty(20), Rate(40) => Total 180 (A4 width matches reasonably well)
+    pdf.cell(40, 10, "Date", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Type", 1, 0, 'C', 1)
+    pdf.cell(50, 10, "Client Name", 1, 0, 'C', 1)
+    pdf.cell(20, 10, "Qty", 1, 0, 'C', 1)
+    pdf.cell(40, 10, "Rate", 1, 1, 'C', 1)
     
     # Rows
-    pdf.set_font("Arial", size=9)
+    pdf.set_font("Arial", size=8)
     for _, row in item_history.iterrows():
-        # Sanitize
-        ts = str(row['timestamp'])
-        reason = str(row['reason'])
+        # Sanitize and Format Date
+        raw_date = str(row.get('Date', ''))[:19]
         try:
-            change = f"{int(row['change']):+d}"
+             # Try to parse and format it to just YYYY-MM-DD
+             dt_obj = datetime.strptime(raw_date, '%Y-%m-%d %H:%M:%S')
+             date_v = dt_obj.strftime('%Y-%m-%d')
         except:
-            change = f"{row['change']}"
-        ref = str(row['reference'])[:20]
-        desc = str(row['description'])[:30]
-        
-        pdf.cell(40, 8, ts, 1, 0, 'C')
-        pdf.cell(25, 8, reason, 1, 0, 'C')
-        
-        # Color logic? FPDF is tricky with partial color. Keep simple.
-        pdf.cell(20, 8, change, 1, 0, 'C')
+             date_v = raw_date[:10] # Fallback to first 10 characters
+             
+        type_v = str(row.get('Transaction_Type', ''))[:20]
+        client_v = str(row.get('Client_Name', ''))[:30]
         
         try:
-             pdf.cell(45, 8, ref.encode('latin-1', 'replace').decode('latin-1'), 1, 0, 'L')
-             pdf.cell(60, 8, desc.encode('latin-1', 'replace').decode('latin-1'), 1, 1, 'L')
+            qty_val = float(row.get('Qty_Changed', 0))
+            qty_str = f"{int(qty_val):+d}"
         except:
-             pdf.cell(45, 8, ref, 1, 0, 'L')
-             pdf.cell(60, 8, desc, 1, 1, 'L')
+            qty_str = str(row.get('Qty_Changed', '0'))
+            
+        rate_v = f"Rs. {float(row.get('Rate', 0)):,.0f}"
+        
+        pdf.cell(40, 8, date_v, 1, 0, 'C')
+        pdf.cell(30, 8, type_v, 1, 0, 'C')
+        
+        try:
+             pdf.cell(50, 8, client_v.encode('latin-1', 'replace').decode('latin-1'), 1, 0, 'L')
+        except:
+             pdf.cell(50, 8, client_v, 1, 0, 'L')
+             
+        pdf.cell(20, 8, qty_str, 1, 0, 'C')
+        pdf.cell(40, 8, rate_v, 1, 1, 'R')
 
     return pdf.output(dest='S').encode('latin-1')
 
@@ -2407,16 +2412,8 @@ if menu == "⚡ Quick Invoice":
                      st.warning("Inventory Empty. Switching to Manual.")
                      selected_category = st.text_input("Item Name", "")
              else:
-                 # Manual Category Logic
-                 cat_sel = st.selectbox("Category", ["Select Category...", "Inverter", "Charger", "Supplier", "Other"], key="quick_inv_cat_manual")
-                 if cat_sel == "Select Category...":
-                     selected_category = st.text_input("Item Name", "")
-                 elif cat_sel in ["Inverter", "Charger"]:
-                     prod_list = PROD_TYPES.get(cat_sel, [])
-                     selected_category = st.selectbox(f"Select {cat_sel}", prod_list)
-                 else:
-                     selected_category = st.text_input("Item Name", "")
-        
+                 # Manual Category Logic Removed, simple text input instead
+                 selected_category = st.text_input("Item Name", "")
         with col_prod2:
              # Description Input (New)
              description_input = st.text_input("Description (Optional)", key="quick_inv_desc_input")
@@ -3106,10 +3103,9 @@ elif menu == "📦 Product Inventory":
     with tab1:
         # 1. Add Stock Area (Calculator Mode)
         with st.expander("➕ Add New Stock Item", expanded=True):
-            c1, c2, c3 = st.columns(3)
+            c1, c2 = st.columns([2, 1])
             i_name = c1.text_input("Item Name", key="new_i_name")
-            cat = c2.selectbox("Category", ["Inverter", "Charger", "Supplier", "Other"], key="new_i_cat")
-            qty = c3.number_input("Quantity", min_value=1, step=1, key="new_i_qty")
+            qty = c2.number_input("Quantity", min_value=1, step=1, key="new_i_qty")
             
             c4, c5 = st.columns(2)
             p_cost = c4.number_input("Cost Price (Rs.)", 0.0, step=10.0, key="new_i_cost")
@@ -3129,7 +3125,7 @@ elif menu == "📦 Product Inventory":
 
             if st.button("Add Item", type="primary"):
                 if i_name:
-                    db.add_inventory_item(i_name, cat if cat else "General", datetime.now(), qty, p_cost, p_sell)
+                    db.add_inventory_item(i_name, "General", datetime.now(), qty, p_cost, p_sell)
                     st.toast("Item Added Successfully!", icon="✅")
                     st.success("Item Added Successfully!")
                     time.sleep(1.0)
@@ -3146,7 +3142,6 @@ elif menu == "📦 Product Inventory":
             if search_inv:
                 # Flexible Search
                 mask = inv.apply(lambda x: search_inv.lower() in str(x['item_name']).lower() or 
-                                        search_inv.lower() in str(x['category']).lower() or 
                                         search_inv.lower() in str(x['id']).lower(), axis=1)
                 inv = inv[mask]
             
@@ -3162,7 +3157,7 @@ elif menu == "📦 Product Inventory":
                     t_cost = row['quantity'] * row['cost_price']
                     t_sell = row['quantity'] * row['selling_price']
                     
-                    st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">#{row['id']}</span><span class="sub-text">{row['category']}</span></div><div class="big-text">{row['item_name']}</div><div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.9rem;"><span>Cost: Rs. {row['cost_price']}</span><span>Sell: Rs. {row['selling_price']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px; font-size:0.9rem;"><span>T.Cost: Rs. {t_cost:,.0f}</span><span>T.Sell: Rs. {t_sell:,.0f}</span></div><div style="margin-top:10px; padding-top:10px; border-top:1px solid #2c2f3f; text-align:right;"><span style="color:{stock_color}; font-weight:bold; font-size:1.1rem;">{row['quantity']} Units</span></div></div>""", unsafe_allow_html=True)
+                    st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">#{row['id']}</span></div><div class="big-text">{row['item_name']}</div><div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.9rem;"><span>Cost: Rs. {row['cost_price']}</span><span>Sell: Rs. {row['selling_price']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px; font-size:0.9rem;"><span>T.Cost: Rs. {t_cost:,.0f}</span><span>T.Sell: Rs. {t_sell:,.0f}</span></div><div style="margin-top:10px; padding-top:10px; border-top:1px solid #2c2f3f; text-align:right;"><span style="color:{stock_color}; font-weight:bold; font-size:1.1rem;">{row['quantity']} Units</span></div></div>""", unsafe_allow_html=True)
                     
                     # ACTION: Open Dialog
                     if st.button(f"✏ Manage", key=f"inv_btn_{row['id']}", width="stretch"):
@@ -3187,31 +3182,95 @@ elif menu == "📦 Product Inventory":
                 sel_id = inv_opts_rev[sel_prod_Label]
                 sel_name = inv_opts[sel_id]
                 
-                # Fetch Logs
-                logs = db.get_inventory_logs(sel_id)
+                # Fetch Logs using the new advanced query
+                logs = db.get_product_ledger(sel_id)
+                
+                # Get current stock
+                current_stock = full_inv[full_inv['id'] == sel_id]['quantity'].values[0] if not full_inv[full_inv['id'] == sel_id].empty else 0
                 
                 if not logs.empty:
-                    # Metrics
-                    total_in = logs[logs['change'] > 0]['change'].sum()
-                    total_out = abs(logs[logs['change'] < 0]['change'].sum())
+                    # Metrics Calculation
+                    total_in = logs[logs['Qty_Changed'] > 0]['Qty_Changed'].sum()
+                    total_out = abs(logs[logs['Qty_Changed'] < 0]['Qty_Changed'].sum())
                     
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Total Added", f"{total_in} Units")
-                    m2.metric("Total Sold/Removed", f"{total_out} Units")
-                    # Net flow?
+                    # Calculate Top Buyer (who bought the most quantity)
+                    sales_only = logs[logs['Qty_Changed'] < 0] # Removed stock is negative
+                    top_buyer = "N/A"
+                    if not sales_only.empty:
+                        # group by client name, sum the absolute qty changed
+                        sales_grouped = sales_only.copy()
+                        sales_grouped['Abs_Qty'] = sales_grouped['Qty_Changed'].abs()
+                        buyer_totals = sales_grouped.groupby('Client_Name')['Abs_Qty'].sum().reset_index()
+                        top_buyer_row = buyer_totals.sort_values(by='Abs_Qty', ascending=False).iloc[0]
+                        top_buyer = f"{top_buyer_row['Client_Name']} ({int(top_buyer_row['Abs_Qty'])})"
+
+                    # Display Top Metrics
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Current Stock", f"{int(current_stock)} Units")
+                    m2.metric("Total Bought (In)", f"{int(total_in)} Units")
+                    m3.metric("Total Sold (Out)", f"{int(total_out)} Units")
+                    m4.metric("🏆 Top Buyer", str(top_buyer))
+                    
+                    st.divider()
+
+                    # Main Details Table
+                    def highlight_qty(val):
+                        try:
+                            if float(val) > 0:
+                                return 'color: #9ece6a' # Green
+                            elif float(val) < 0:
+                                return 'color: #f7768e' # Red
+                        except: pass
+                        return ''
+
+                    # Format Date visually
+                    styled_logs = logs.style.map(highlight_qty, subset=['Qty_Changed'])
+                    styled_logs = styled_logs.format({"Date": lambda x: str(x)[:10]})
                     
                     st.dataframe(
-                        logs[['timestamp', 'change', 'reason', 'reference', 'description']],
+                        styled_logs,
                         width="stretch",
                         column_config={
-                            "timestamp": "Date/Time",
-                            "change": st.column_config.NumberColumn("Change", format="%+d"),
-                            "reason": "Type",
-                            "reference": "Reference",
-                            "description": "Details"
-                        }
+                            "Date": "Date",
+                            "Transaction_Type": "Type",
+                            "Client_Name": "Client Name",
+                            "Qty_Changed": st.column_config.NumberColumn("Change", format="%+d"),
+                            "Rate": st.column_config.NumberColumn("Rate", format="Rs. %.2f")
+                        },
+                        hide_index=True
                     )
                     
+                    # Sales by Client Summary
+                    if not sales_only.empty:
+                        st.subheader("👥 Sales by Client Summary")
+                        s_copy = sales_only.copy()
+                        s_copy['Qty Bought'] = s_copy['Qty_Changed'].abs()
+                        s_copy['Amount Spent'] = s_copy['Qty Bought'] * s_copy['Rate']
+                        
+                        summary_df = s_copy.groupby('Client_Name').agg(
+                            {'Qty Bought': 'sum', 'Amount Spent': 'sum'}
+                        ).reset_index().sort_values(by='Qty Bought', ascending=False)
+                        
+                        st.dataframe(
+                            summary_df, 
+                            width="stretch", 
+                            column_config={
+                                "Client_Name": "Client Name",
+                                "Qty Bought": st.column_config.NumberColumn("Total Qty Bought"),
+                                "Amount Spent": st.column_config.NumberColumn("Total Amount Spent", format="Rs. %.2f")
+                            },
+                            hide_index=True
+                        )
+                        
+                        # Graph inside expander
+                        with st.expander("📊 View Sales Graph", expanded=False):
+                            import plotly.express as px
+                            fig = px.bar(summary_df, x='Client_Name', y='Qty Bought', title="Sales Quantity per Client", text_auto=True)
+                            fig.update_layout(xaxis_title="", yaxis_title="Quantity", margin=dict(l=0, r=0, t=30, b=0))
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No sales recorded for this product yet.")
+
                     # PDF Download
                     pdf_data = create_inventory_ledger_pdf(sel_name, logs)
                     st.download_button("📥 Download Product Ledger (PDF)", data=pdf_data, file_name=f"StockLedger_{sel_name}.pdf", mime="application/pdf")

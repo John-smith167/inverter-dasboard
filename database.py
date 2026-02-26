@@ -457,6 +457,150 @@ class DatabaseManager:
         # Sort by ID descending (proxy for time) or timestamp
         return item_logs.sort_values(by='id', ascending=False)
 
+    def get_product_ledger(self, item_id):
+        """
+        Advanced Database Query for Product History / Ledger.
+        Returns a DataFrame with columns:
+        Date, Transaction_Type, Client_Name, Qty_Changed, Rate
+        """
+        def clean_id(x):
+            return str(x).replace('.0', '').strip()
+
+        target_id = clean_id(item_id)
+        
+        # We must look up item_name because Sales/Purchases tables only store item_name
+        inv_df = self._read_data("Inventory")
+        item_name_target = ""
+        current_rate = 0.0
+        if not inv_df.empty:
+            match = inv_df[inv_df['id'].astype(str).apply(clean_id) == target_id]
+            if not match.empty:
+                item_name_target = str(match.iloc[0]['item_name']).strip().lower()
+                current_rate = float(match.iloc[0]['selling_price'])
+
+        # 1. Get Sales associated with this Item
+        sales_df = self._read_data("Sales")
+        sales_data = []
+        if not sales_df.empty and 'item_name' in sales_df.columns:
+            mask = sales_df['item_name'].astype(str).str.strip().str.lower() == item_name_target
+            item_sales = sales_df[mask]
+            
+            for _, row in item_sales.iterrows():
+                # For sales, qty withdrawn is negative
+                qty = float(row.get('quantity_sold', 0))
+                ret_qty = float(row.get('return_quantity', 0))
+                net_qty = -(qty - ret_qty) # Usually sold is negative for stock, return is positive
+                
+                # Check actual type if available
+                txn_type = row.get('type', 'Sale')
+                if not txn_type:
+                     txn_type = 'Sale'
+                if txn_type in ["Sale Return", "Return"]:
+                    net_qty = abs(net_qty) if net_qty < 0 else net_qty # returns add to stock
+                elif txn_type in ["Sale", "Sale / Item"]:
+                    net_qty = -abs(qty)
+                
+                sales_data.append({
+                    "Date": row.get('sale_date'),
+                    "Transaction_Type": txn_type,
+                    "Client_Name": row.get('customer_name', 'Unknown'),
+                    "Reference": row.get('invoice_id', ''),
+                    "Qty_Changed": net_qty,
+                    "Rate": float(row.get('sale_price', 0.0))
+                })
+
+        # 2. Get Purchases associated with this Item
+        purchases_df = self._read_data("Purchases")
+        purchases_data = []
+        if not purchases_df.empty and 'item_name' in purchases_df.columns:
+            mask = purchases_df['item_name'].astype(str).str.strip().str.lower() == item_name_target
+            item_purchases = purchases_df[mask]
+            
+            for _, row in item_purchases.iterrows():
+                # Purchases add to stock
+                txn_type = "Purchase/Add"
+                qty = float(row.get('quantity_bought', 0))
+                
+                purchases_data.append({
+                    "Date": row.get('purchase_date'),
+                    "Transaction_Type": "Buy / Purchase",
+                    "Client_Name": row.get('supplier_name', 'Unknown'),
+                    "Reference": row.get('purchase_id', ''),
+                    "Qty_Changed": qty,
+                    "Rate": float(row.get('unit_cost', 0.0))
+                })
+
+        # 3. Get generic Inventory Logs that are NOT captured by Sales/Purchases
+        # (e.g. manual adjustments)
+        raw_logs = self.get_inventory_logs(item_id)
+        logs_data = []
+        
+        # We need a set of dates/changes covered to avoid duplication
+        # Or checking references if they exist
+        covered_refs = set([s['Reference'] for s in sales_data if s['Reference']] + [p['Reference'] for p in purchases_data if p['Reference']])
+
+        for _, row in raw_logs.iterrows():
+            ref = str(row.get('reference', ''))
+            reason = str(row.get('reason', ''))
+            
+            # Decide if we skip this log (if it's already in covered_refs and it's an Invoice/Purchase)
+            if ref and ref in covered_refs:
+                continue
+                
+            qty_change = float(row.get('change', 0))
+            txn_type = reason if reason else "Adjustment"
+            
+            # In manual updates, 'reference' is used in the UI to store "Reference / Client"
+            # So if a reference exists, we should treat it as the Client Name.
+            client = ref if ref else "Admin"
+            
+            # Try to determine if it's an addition or removal for naming
+            if qty_change > 0:
+                txn_type = "Buy"
+            elif qty_change < 0:
+                txn_type = "Sell"
+                
+            # Rate determination:
+            # If they bought (added) it implies they bought at cost price.
+            # If they sold (removed) it implies they sold at selling price.
+            if qty_change > 0:
+                # Need to lookup cost price
+                rate = 0.0
+                if not inv_df.empty and item_name_target:
+                    match = inv_df[inv_df['item_name'].astype(str).str.strip().str.lower() == item_name_target]
+                    if not match.empty:
+                        rate = float(match.iloc[0]['cost_price'])
+            else:
+                rate = current_rate # Selling price
+                
+            logs_data.append({
+                "Date": row.get('timestamp'),
+                "Transaction_Type": txn_type,
+                "Client_Name": client,
+                "Reference": ref,
+                "Qty_Changed": qty_change,
+                "Rate": rate
+            })
+
+        # 4. Combine all and sort by Date descending
+        all_data = sales_data + purchases_data + logs_data
+        
+        if not all_data:
+            return pd.DataFrame(columns=["Date", "Transaction_Type", "Client_Name", "Qty_Changed", "Rate"])
+            
+        combined_df = pd.DataFrame(all_data)
+        
+        # Ensure Date column is datetime for sorting
+        combined_df['Date_Parsed'] = pd.to_datetime(combined_df['Date'], errors='coerce')
+        combined_df = combined_df.sort_values(by='Date_Parsed', ascending=False)
+        combined_df = combined_df.drop(columns=['Date_Parsed'])
+        
+        # Drop reference as per user request
+        if 'Reference' in combined_df.columns:
+            combined_df = combined_df.drop(columns=['Reference'])
+        
+        return combined_df
+
     def delete_inventory_item(self, item_id):
         df = self._read_data("Inventory")
         if not df.empty:
