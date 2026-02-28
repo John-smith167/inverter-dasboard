@@ -824,7 +824,7 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
         pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
         pdf.cell(25, 8, "Discount", 1, 0, 'C', 1)
         pdf.cell(30, 8, "Total", 1, 0, 'C', 1) 
-        pdf.cell(25, 8, "Cash Rec.", 1, 1, 'C', 1) 
+        pdf.cell(25, 8, "Cash", 1, 1, 'C', 1) 
         
     else:
         # STANDARD HEADER
@@ -907,7 +907,9 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                  rate = float(row.get('Rate', 0))
                  disc = float(row.get('Discount', 0))
                  total_val = float(row.get('Total', 0))
-                 cash_val = float(row.get('Cash Received', 0))
+                 cash_rec = float(row.get('Cash Received', 0))
+                 cash_paid = float(row.get('Cash Paid', 0))
+                 cash_val = cash_rec if cash_rec > 0 else cash_paid
                  
                  # Helper
                  def fmt(v):
@@ -1158,7 +1160,8 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                 c_in = 0.0
             elif r_type in ["Purchase Return", "Return Item"]:
                 # Purchase Return means supplier pays us? (Cash In)
-                pass # c_in is correct
+                c_in += c_out
+                c_out = 0.0
                 
             cash_rec_t += c_in
             cash_paid_t += c_out
@@ -2361,8 +2364,8 @@ if menu == "⚡ Quick Invoice":
             "Total": [0.0] * 5
         }
         
-        # UNIFIED TYPE OPTIONS - WITH CASH RECEIVED
-        type_options = ["Sale", "Purchase", "Sale Return", "Purchase Return", "Cash Received"]
+        # UNIFIED TYPE OPTIONS - WITH CASH RECEIVED & CASH PAID
+        type_options = ["Sale", "Purchase", "Sale Return", "Purchase Return", "Cash Received", "Cash Paid"]
         
         # Initialize Grid
         if 'sales_grid_data' not in st.session_state:
@@ -2376,9 +2379,11 @@ if menu == "⚡ Quick Invoice":
         if 'Description' not in st.session_state.sales_grid_data.columns:
              st.session_state.sales_grid_data['Description'] = ""
              
-        # Ensure Cash Received exists
+        # Ensure Cash Received and Cash Paid exists
         if "Cash Received" not in st.session_state.sales_grid_data.columns:
              st.session_state.sales_grid_data["Cash Received"] = 0.0
+        if "Cash Paid" not in st.session_state.sales_grid_data.columns:
+             st.session_state.sales_grid_data["Cash Paid"] = 0.0
              
         # Remove old Cash columns if they exist (we will use Total or a generic Amount, 
         # but wait, record_batch_transactions expects 'Cash Received'/'Cash Paid'.
@@ -2482,11 +2487,12 @@ if menu == "⚡ Quick Invoice":
             "Rate": st.column_config.NumberColumn("Rate / Amount", min_value=0.0, step=0.01, format="%.2f", required=True),
             "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=0.01, format="%.2f"),
             "Cash Received": st.column_config.NumberColumn("Cash Received", min_value=0.0, step=0.01, format="%.2f", required=True),
+            "Cash Paid": st.column_config.NumberColumn("Cash Paid", min_value=0.0, step=0.01, format="%.2f", required=True),
             "Total": st.column_config.NumberColumn("Total", disabled=True, format="%.2f"),
         }
         
         # Display Order
-        cols_order = ["Date", "Type", "Item Name", "Description", "Qty", "Rate", "Discount", "Total", "Cash Received"]
+        cols_order = ["Date", "Type", "Item Name", "Description", "Qty", "Rate", "Discount", "Total", "Cash Received", "Cash Paid"]
 
         # Help Text
         st.info("💡 **Tip:** Use 'Cash Received' column for payments. For Purchases, leaving it 0 means Credit.")
@@ -2524,7 +2530,7 @@ if menu == "⚡ Quick Invoice":
         # Detect changes and update state + recalculate
         
         # 1. Coerce Numerics
-        cols_to_numeric = ['Qty', 'Rate', 'Discount', 'Cash Received', 'Total']
+        cols_to_numeric = ['Qty', 'Rate', 'Discount', 'Cash Received', 'Cash Paid', 'Total']
         needs_rerun = False
         
         # We work on a copy to compare later, or just modify edited_df?
@@ -2550,9 +2556,11 @@ if menu == "⚡ Quick Invoice":
             
         # Apply Logic
         if 'Type' in edited_df.columns:
-            edited_df['Cash Paid'] = 0.0
-            # Total is just Base Total (Gross)
-            edited_df['Total'] = base_total
+            # Don't overwrite Cash Paid here, it erases user input!
+
+            # Total is Base Total (Gross) only for Goods, not Cash inputs
+            mask_cash = edited_df['Type'].isin(["Cash Received", "Cash Paid"])
+            edited_df.loc[~mask_cash, 'Total'] = base_total[~mask_cash]
         else:
             edited_df['Total'] = base_total
             
@@ -2632,45 +2640,42 @@ if menu == "⚡ Quick Invoice":
              df_display['Real Cash In'] = 0.0
              df_display['Real Cash Out'] = 0.0
              
-             # Sales -> Cash In
-             df_display.loc[mask_sale, 'Real Cash In'] = df_display.loc[mask_sale, 'Cash Received']
+             # Extract explicit cash inputs from columns
+             cash_in_col = df_display['Cash Received'].fillna(0)
+             cash_out_col = df_display['Cash Paid'].fillna(0)
              
-             # Purchases -> Cash Out
-             df_display.loc[mask_pur, 'Real Cash Out'] = df_display.loc[mask_pur, 'Cash Received']
+             # Sales -> Cash In (from column)
+             df_display.loc[mask_sale, 'Real Cash In'] += cash_in_col[mask_sale]
              
-             # Sale Return -> Cash Out (Refund)
-             df_display.loc[mask_sr, 'Real Cash Out'] = df_display.loc[mask_sr, 'Cash Received']
+             # Purchases -> Cash Out (from column - either Cash Received or Cash Paid for backward compatibility)
+             df_display.loc[mask_pur, 'Real Cash Out'] += cash_out_col[mask_pur] + cash_in_col[mask_pur]
+             
+             # Sale Return -> Cash Out (Refund -> mapping both columns just in case)
+             df_display.loc[mask_sr, 'Real Cash Out'] += cash_out_col[mask_sr] + cash_in_col[mask_sr]
              
              # Purchase Return -> Cash In (Refund from Supplier)
-             df_display.loc[mask_pr, 'Real Cash In'] = df_display.loc[mask_pr, 'Cash Received']
+             df_display.loc[mask_pr, 'Real Cash In'] += cash_in_col[mask_pr] + cash_out_col[mask_pr]
 
              # CASH RECEIVED TYPE
              # Logic: If Type is "Cash Received", the amount is either in "Cash Received" column
              # OR in "Total" column (if user entered it there).
              mask_cash_recv = df_display['Type'] == "Cash Received"
-             # 1. Take 'Cash Received' column value
              cash_val_col = df_display.loc[mask_cash_recv, 'Cash Received']
-             # 2. Add 'Total' column value IF 'Cash Received' is 0
              total_val_col = df_display.loc[mask_cash_recv, 'Total']
              
-             # Vectorized logic: if cash_rec > 0, use it. Else use total.
-             # Wait, better logic:
-             # Just sum both? If a user puts 500 in Total and 0 in CashRec, we take 500.
-             # If user puts 0 in Total and 500 in CashRec, we take 500.
-             # If user puts 500 in Total AND 500 in CashRec? (Ambiguous, but likely same value).
-             # Let's take MAX of both to avoid double counting? Or just Total + CashRec?
-             # My save logic only moves Total to CashRec if CashRec is 0.
-             # So safely: value = Cash Received + (Total if Cash Received == 0 else 0)
-             
-             # Implementation:
-             c_r = df_display.loc[mask_cash_recv, 'Cash Received']
-             t_r = df_display.loc[mask_cash_recv, 'Total']
-             
-             # Where Cash Rec is 0, take Total.
-             effective_cash = c_r.where(c_r > 0, t_r)
-             
-             df_display.loc[mask_cash_recv, 'Real Cash In'] += effective_cash
+             effective_cash_in = cash_val_col.where(cash_val_col > 0, total_val_col)
+             df_display.loc[mask_cash_recv, 'Real Cash In'] += effective_cash_in
 
+             # CASH PAID TYPE
+             # Logic: If Type is "Cash Paid", the amount is either in "Cash Paid" column
+             # OR in "Total" column (if user entered it there).
+             mask_cash_paid = df_display['Type'] == "Cash Paid"
+             cash_paid_val_col = df_display.loc[mask_cash_paid, 'Cash Paid']
+             total_paid_val_col = df_display.loc[mask_cash_paid, 'Total']
+             
+             effective_cash_out = cash_paid_val_col.where(cash_paid_val_col > 0, total_paid_val_col)
+             df_display.loc[mask_cash_paid, 'Real Cash Out'] += effective_cash_out
+             
              total_cash_in = df_display['Real Cash In'].sum()
              total_cash_out = df_display['Real Cash Out'].sum()
              
@@ -2764,8 +2769,15 @@ if menu == "⚡ Quick Invoice":
                              if cash_row == 0 and total_row > 0:
                                  row["Cash Received"] = total_row
                                  row["Total"] = 0 
-                             elif cash_row > 0:
-                                 pass
+                                 
+                         # --- CASH PAID LOGIC ---
+                         elif txn_type == "Cash Paid":
+                             total_row = float(row.get("Total", 0))
+                             cash_paid_row = float(row.get("Cash Paid", 0))
+                             
+                             if cash_paid_row == 0 and total_row > 0:
+                                 row["Cash Paid"] = total_row
+                                 row["Total"] = 0
                          
                          if item_name or txn_type in ["Cash Received", "Cash Paid"]:
                              final_rows.append(row.to_dict())

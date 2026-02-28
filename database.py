@@ -747,33 +747,45 @@ class DatabaseManager:
         """
         Calculates the current balance for a customer/supplier.
         Positive Balance: We checked logic, typically for Customer: Debit = Receivable.
-        Balance = Sum(Debit) - Sum(Credit).
+        Balance = Sum(Debit) - Sum(Credit) + Opening Balance.
         If result > 0: Customer owes us.
         If result < 0: We owe them (or advance payment).
         """
+        # Fetch Opening Balance
+        cust_df = self._read_data("Customers")
+        opening_bal = 0.0
+        if not cust_df.empty and 'name' in cust_df.columns:
+            matches = cust_df[cust_df['name'].astype(str).str.lower() == str(customer_name).lower()]
+            if not matches.empty:
+                row = matches.iloc[0]
+                if 'opening_balance' in matches.columns:
+                    try:
+                        opening_bal = float(row['opening_balance'])
+                    except: pass
+
         ledger = self._read_data("Ledger")
         if ledger.empty:
-            return 0.0
+            return opening_bal
             
         # Filter by name
         # numeric checks or string?
         if 'party_name' not in ledger.columns:
             # Fallback for older schema?
             if 'name' in ledger.columns:
-                cust_df = ledger[ledger['name'].astype(str) == str(customer_name)]
+                cust_ledger = ledger[ledger['name'].astype(str) == str(customer_name)]
             else:
-                return 0.0
+                return opening_bal
         else:
              cust_ledger = ledger[ledger['party_name'].astype(str) == str(customer_name)]
              
         if cust_ledger.empty:
-            return 0.0
+            return opening_bal
             
         # Ensure numeric
         debits = pd.to_numeric(cust_ledger['debit'], errors='coerce').fillna(0.0).sum()
         credits = pd.to_numeric(cust_ledger['credit'], errors='coerce').fillna(0.0).sum()
         
-        return debits - credits
+        return debits - credits + opening_bal
 
     def record_batch_transactions(self, invoice_id, customer_name, items_df, freight, misc, grand_total=0.0):
         """
