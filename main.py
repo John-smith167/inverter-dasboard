@@ -2212,88 +2212,7 @@ menu = st.session_state.page
 
 
 
-def update_sales_grid(editor_key="sales_editor_unified"):
-    """
-    Callback to sync data_editor changes to session_state.sales_grid_data immediately.
-    Solves persistence issues on first edit.
-    """
-    if editor_key not in st.session_state:
-        return
 
-    # In this environment, the editor key contains a DICTIONARY of changes (edited_rows, etc.) series
-    # rather than the full dataframe. We must manually apply these changes.
-    state = st.session_state[editor_key]
-    
-    # If state is a DataFrame (unexpected but possible in newer Streamlit), use it directly
-    if isinstance(state, pd.DataFrame):
-        df = state
-    else:
-        # State is a dict of changes
-        df = st.session_state.sales_grid_data.copy()
-        
-        # 1. Handle Edited Rows
-        # state['edited_rows'] is {row_idx: {col_name: new_value}}
-        for idx, changes in state.get("edited_rows", {}).items():
-            # In dynamic mode, idx matches the current df index
-            if idx in df.index:
-                for col, val in changes.items():
-                    df.at[idx, col] = val
-        
-        # 2. Handle Deleted Rows
-        deleted_rows = state.get("deleted_rows", [])
-        if deleted_rows:
-            df = df.drop(index=deleted_rows)
-            
-        # 3. Handle Added Rows
-        added_rows = state.get("added_rows", [])
-        if added_rows:
-            for new_row in added_rows:
-                # new_row is a dict of values
-                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-
-    # Now calculate totals on the updated 'df'
-    # 1. Calc Standard Total = Qty * Rate - Discount
-    # Ensure numeric for ALL relevant columns including Return Qty
-    numeric_cols = ['Qty', 'Rate', 'Discount', 'Return Qty', 'Total', 'Cash Received', 'Cash Paid']
-    for col in numeric_cols:
-        if col not in df.columns: df[col] = 0.0
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-            
-    qty = df['Qty']
-    rate = df['Rate']
-    disc = df['Discount']
-    
-    # Calculate Base Total (Qty * Rate - Discount)
-    base_total = (qty * rate) - disc
-    
-    # 2. Map to Specific Logic based on Type
-    if 'Type' in df.columns:
-        # Reset backend columns
-        df['Cash Received'] = 0.0
-        df['Cash Paid'] = 0.0
-        df['Total'] = base_total
-        
-        # Identify Row Types
-        mask_cash_recv = df['Type'] == "Cash Received"
-        mask_cash_paid = df['Type'] == "Cash Paid"
-        mask_items = ~(mask_cash_recv | mask_cash_paid)
-        
-        # Handle Cash Received
-        # Use Rate/Amount as value (Qty typically 1)
-        # Total column logic: Visual 0.0 to emphasize it's payment?
-        # Backend expects 'Cash Received' col populated.
-        df.loc[mask_cash_recv, 'Cash Received'] = df.loc[mask_cash_recv, 'Total']
-        df.loc[mask_cash_recv, 'Total'] = 0.0
-        
-        # Handle Cash Paid
-        df.loc[mask_cash_paid, 'Cash Paid'] = df.loc[mask_cash_paid, 'Total']
-        df.loc[mask_cash_paid, 'Total'] = 0.0
-        
-    else:
-        df['Total'] = base_total
-        
-    # Save back
-    st.session_state.sales_grid_data = df
 
 # --- TAB: QUICK INVOICE ---
 if menu == "⚡ Quick Invoice":
@@ -2364,8 +2283,8 @@ if menu == "⚡ Quick Invoice":
             "Total": [0.0] * 5
         }
         
-        # UNIFIED TYPE OPTIONS - WITH CASH RECEIVED & CASH PAID
-        type_options = ["Sale", "Purchase", "Sale Return", "Purchase Return", "Cash Received", "Cash Paid"]
+        # UNIFIED TYPE OPTIONS - WITH CASH RECEIVED & CASH PAID & LABOUR COST
+        type_options = ["Sale", "Purchase", "Sale Return", "Purchase Return", "Cash Received", "Cash Paid", "Labour Cost"]
         
         # Initialize Grid
         if 'sales_grid_data' not in st.session_state:
@@ -2523,56 +2442,63 @@ if menu == "⚡ Quick Invoice":
             key=editor_key,
             column_config=column_config,
             column_order=cols_order,
-            hide_index=True 
+            hide_index=True
         )
         
-        # --- Post-Processing & Calculation ---
-        # Detect changes and update state + recalculate
-        
-        # 1. Coerce Numerics
-        cols_to_numeric = ['Qty', 'Rate', 'Discount', 'Cash Received', 'Cash Paid', 'Total']
-        needs_rerun = False
-        
-        # We work on a copy to compare later, or just modify edited_df?
-        # edited_df is the new state from UI. We must validate/calc on it.
-        
-        # Safe numeric conversion
-        for col in cols_to_numeric:
-            if col in edited_df.columns:
-                 # Check if we need to convert?
-                 # If numeric column, data_editor returns numbers usually.
-                 # But just in case of NaNs
-                 edited_df[col] = pd.to_numeric(edited_df[col], errors='coerce').fillna(0.0)
-
-        # 2. Calculate Totals
-        # Base Total
-        if 'Qty' in edited_df.columns and 'Rate' in edited_df.columns:
-            q = edited_df['Qty']
-            r = edited_df['Rate']
-            d = edited_df.get('Discount', 0.0)
-            base_total = (q * r) - d
-        else:
-            base_total = 0.0
+        # --- Native State Preservation & Pre-Calculation ---
+        # If the editor's output differs from our saved state, user has made an edit.
+        # We compute the calculated columns and immediately rerun to show them cleanly.
+        try:
+            changed = not edited_df.equals(st.session_state.sales_grid_data)
+        except:
+            changed = True
             
-        # Apply Logic
-        if 'Type' in edited_df.columns:
-            # Don't overwrite Cash Paid here, it erases user input!
-
-            # Total is Base Total (Gross) only for Goods, not Cash inputs
-            mask_cash = edited_df['Type'].isin(["Cash Received", "Cash Paid"])
-            edited_df.loc[~mask_cash, 'Total'] = base_total[~mask_cash]
-        else:
-            edited_df['Total'] = base_total
+        if changed:
+            # Fill missing strings logically so Selectbox doesn't drop row
+            for str_col in ["Type", "Item Name", "Description"]:
+                 if str_col in edited_df.columns:
+                     edited_df[str_col] = edited_df[str_col].fillna("")
             
-        # 3. Check against Session State
-        # If the dataframe content is different (ignoring index), update and rerun
-        # We can use .equals() but float point issues?
-        # Let's compare specifically interesting columns or just check equality.
-        
-        if not edited_df.equals(st.session_state.sales_grid_data):
+            if "Type" in edited_df.columns:
+                 edited_df["Type"] = edited_df["Type"].replace("", "Sale")
+                 
+            # 1. Calc Standard Total = Qty * Rate - Discount
+            numeric_cols = ['Qty', 'Rate', 'Discount', 'Return Qty', 'Total', 'Cash Received', 'Cash Paid']
+            for col in numeric_cols:
+                if col not in edited_df.columns: edited_df[col] = 0.0
+                edited_df[col] = pd.to_numeric(edited_df[col], errors='coerce').fillna(0.0)
+                    
+            qty = edited_df['Qty']
+            rate = edited_df['Rate']
+            disc = edited_df['Discount']
+            
+            base_total = (qty * rate) - disc
+            
+            # 2. Map to Specific Logic based on Type
+            if 'Type' in edited_df.columns:
+                edited_df['Total'] = base_total
+                
+                mask_cash_recv = edited_df['Type'] == "Cash Received"
+                mask_cash_paid = edited_df['Type'] == "Cash Paid"
+                mask_labour = edited_df['Type'] == "Labour Cost"
+                
+                edited_df.loc[mask_cash_recv, 'Cash Received'] = edited_df.loc[mask_cash_recv, 'Cash Received'].where(~(edited_df.loc[mask_cash_recv, 'Total'] > 0), edited_df.loc[mask_cash_recv, 'Total'])
+                edited_df.loc[mask_cash_recv, 'Total'] = 0.0
+                
+                edited_df.loc[mask_cash_paid, 'Cash Paid'] = edited_df.loc[mask_cash_paid, 'Cash Paid'].where(~(edited_df.loc[mask_cash_paid, 'Total'] > 0), edited_df.loc[mask_cash_paid, 'Total'])
+                edited_df.loc[mask_cash_paid, 'Total'] = 0.0
+                
+                edited_df.loc[mask_labour, 'Total'] = base_total[mask_labour]
+            else:
+                edited_df['Total'] = base_total
+                
+            # Update session state & re-render so UI shows new Totals right away
             st.session_state.sales_grid_data = edited_df
             st.rerun()
-            
+        
+        # --- Post-Processing & Calculation ---
+        # With on_change callback correctly hooked up, state is already updated!
+        
         # Update display_df for Footer use
         df_display = st.session_state.sales_grid_data.copy()
         
@@ -2628,6 +2554,10 @@ if menu == "⚡ Quick Invoice":
              mask_pr = df_display['Type'] == "Purchase Return"
              total_pur_ret = gross_val[mask_pr].sum()
              
+             # Labour Cost
+             mask_labour = df_display['Type'] == "Labour Cost"
+             total_labour_cost = gross_val[mask_labour].sum()
+             
              # Cash Logic:
              # If "Cash Received" column is populated:
              # For Sales: It's Cash In.
@@ -2655,6 +2585,10 @@ if menu == "⚡ Quick Invoice":
              
              # Purchase Return -> Cash In (Refund from Supplier)
              df_display.loc[mask_pr, 'Real Cash In'] += cash_in_col[mask_pr] + cash_out_col[mask_pr]
+             
+             # Labour Cost -> Cash In / Out mapping
+             df_display.loc[mask_labour, 'Real Cash In'] += cash_in_col[mask_labour]
+             df_display.loc[mask_labour, 'Real Cash Out'] += cash_out_col[mask_labour]
 
              # CASH RECEIVED TYPE
              # Logic: If Type is "Cash Received", the amount is either in "Cash Received" column
@@ -2680,10 +2614,12 @@ if menu == "⚡ Quick Invoice":
              total_cash_out = df_display['Real Cash Out'].sum()
              
              # Net Goods Value 
-             net_goods = (total_sales - total_sale_ret) - (total_purchases - total_pur_ret)
+             base_net_goods = (total_sales - total_sale_ret) - (total_purchases - total_pur_ret)
+             labour_sign = 1 if base_net_goods >= 0 else -1
+             net_goods = base_net_goods + (total_labour_cost * labour_sign)
              
         else:
-             total_sales = total_purchases = total_sale_ret = total_pur_ret = 0.0
+             total_sales = total_purchases = total_sale_ret = total_pur_ret = total_labour_cost = 0.0
              total_cash_in = total_cash_out = net_goods = 0.0
 
         st.divider()
@@ -2697,6 +2633,7 @@ if menu == "⚡ Quick Invoice":
                  <div><b>Purchases:</b> {total_purchases:,.0f}</div>
                  <div><b>Ret (S):</b> {total_sale_ret:,.0f}</div>
                  <div><b>Ret (P):</b> {total_pur_ret:,.0f}</div>
+                 <div><b>Labour:</b> {total_labour_cost:,.0f}</div>
              </div>
              <div style="display:flex; gap:15px; font-size:0.85rem; color:#a9b1d6; margin-top:5px;">
                   <div style="color:#9ece6a;"><b>Cash In:</b> {total_cash_in:,.0f}</div>
@@ -2779,9 +2716,12 @@ if menu == "⚡ Quick Invoice":
                                  row["Cash Paid"] = total_row
                                  row["Total"] = 0
                          
-                         if item_name or txn_type in ["Cash Received", "Cash Paid"]:
-                             final_rows.append(row.to_dict())
+                         if txn_type == "Labour Cost" and not item_name:
+                             item_name = "Labour"
+                             row["Item Name"] = item_name
                              
+                         if item_name or txn_type in ["Cash Received", "Cash Paid", "Labour Cost"]:
+                             final_rows.append(row.to_dict())
                      backend_df = pd.DataFrame(final_rows)
                      prev_bal = db.get_customer_balance(customer_name) 
 

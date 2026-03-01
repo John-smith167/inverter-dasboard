@@ -870,6 +870,30 @@ class DatabaseManager:
                      if description: cash_desc += f" - {description}"
                      self.add_ledger_entry(customer_name, cash_desc, 0.0, cash_recv, date_val, ref_no=invoice_id)
 
+            # 1.5 LABOUR COST
+            elif txn_type == "Labour Cost":
+                desc = f"{txn_type} '{item_name}'"; desc = desc + f" - {description}" if description else desc
+                
+                actual_total = row_total if row_total > 0 else (qty * rate)
+                
+                # Only add the base goods/services row if there's an actual charged amount
+                if actual_total > 0:
+                    self.add_ledger_entry(customer_name, desc, actual_total, 0.0, date_val, quantity=qty, rate=rate, discount=float(row.get("Discount", 0)), ref_no=invoice_id)
+                
+                # Cash Received logic
+                if cash_recv > 0:
+                     cash_desc = "Labour Cost - Cash Received"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash", "Labour Cost"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, 0.0, cash_recv, date_val, ref_no=invoice_id)
+                     
+                # Cash Paid logic
+                if cash_paid > 0:
+                     cash_desc = "Labour Cost - Cash Paid (Expense)"
+                     if item_name and item_name not in ["Cash Received", "Cash Paid", "Cash", "Labour Cost"]: cash_desc += f" - {item_name}"
+                     if description: cash_desc += f" - {description}"
+                     self.add_ledger_entry(customer_name, cash_desc, cash_paid, 0.0, date_val, ref_no=invoice_id)
+
             # 2. PURCHASE
             elif txn_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
                 # Ledger: Credit Supplier (Payable)
