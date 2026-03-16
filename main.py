@@ -816,15 +816,16 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
 
     elif is_batch:
         # BATCH HEADER WITH SEPARATE DATE COLUMN
-        # Order: S#(8), Date(22), Item Description(43), Qty(12), Rate(25), Disc(25), Total(30), Cash(25)
-        pdf.cell(8, 8, "S#", 1, 0, 'C', 1) 
-        pdf.cell(22, 8, "Date", 1, 0, 'C', 1)
-        pdf.cell(43, 8, "Item / Description", 1, 0, 'L', 1)
-        pdf.cell(12, 8, "Qty", 1, 0, 'C', 1)
-        pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
-        pdf.cell(25, 8, "Discount", 1, 0, 'C', 1)
-        pdf.cell(30, 8, "Total", 1, 0, 'C', 1) 
-        pdf.cell(25, 8, "Cash", 1, 1, 'C', 1) 
+        # Order: S#(7), Date(20), Item Description(40), Qty(10), Rate(20), Disc(18), Total(25), Cash Rec(25), Cash Paid(25)
+        pdf.cell(7, 8, "S#", 1, 0, 'C', 1) 
+        pdf.cell(20, 8, "Date", 1, 0, 'C', 1)
+        pdf.cell(40, 8, "Item / Description", 1, 0, 'L', 1)
+        pdf.cell(10, 8, "Qty", 1, 0, 'C', 1)
+        pdf.cell(20, 8, "Rate", 1, 0, 'C', 1)
+        pdf.cell(18, 8, "Discount", 1, 0, 'C', 1)
+        pdf.cell(25, 8, "Total", 1, 0, 'C', 1) 
+        pdf.cell(25, 8, "Cash Rec", 1, 0, 'C', 1) 
+        pdf.cell(25, 8, "Cash Paid", 1, 1, 'C', 1) 
         
     else:
         # STANDARD HEADER
@@ -841,7 +842,7 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
     
     # X Positions for Batch
     x_start = 10
-    w_sn, w_dt, w_desc, w_qty, w_rate, w_disc, w_tot, w_cash = 8, 22, 43, 12, 25, 25, 30, 25
+    w_sn, w_dt, w_desc, w_qty, w_rate, w_disc, w_tot, w_cash_in, w_cash_out = 7, 20, 40, 10, 20, 18, 25, 25, 25
     
     if is_receipt:
         pdf.cell(15, 8, "1", 1, 0, 'C')
@@ -890,14 +891,15 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                  # Prepare Data
                  txn_type = row.get('Type', 'Sale')
                  item_name = str(row.get('Item Name', '')).strip()
-                 # Skip empty checks (keeping same logic as before)
-                 if not item_name and not row.get('Total') and not row.get('Cash Received'):
-                      if txn_type != "Cash Received": continue
+                 desc_val = str(row.get('Description', '')).strip()
+                 
+                 # Skip entirely empty rows
+                 if not item_name and not desc_val and not row.get('Total') and not row.get('Cash Received') and not row.get('Cash Paid'):
+                      if txn_type not in ["Cash Received", "Cash Paid", "Labour Cost"]: continue
                  
                  type_str = str(txn_type).title()
                  
                  # Combine Item Name and Description
-                 desc_val = str(row.get('Description', '')).strip()
                  if desc_val and desc_val.lower() != 'nan':
                      display_name = f"[{type_str}] {item_name}\n{desc_val}" if item_name else f"[{type_str}] {desc_val}"
                  else:
@@ -909,17 +911,9 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                  total_val = float(row.get('Total', 0))
                  cash_rec = float(row.get('Cash Received', 0))
                  cash_paid = float(row.get('Cash Paid', 0))
-                 cash_val = cash_rec if cash_rec > 0 else cash_paid
                  
-                 # Helper
-                 def fmt(v):
-                     if v == 0: return "-"
-                     # If decimal part is zero, return integer format
-                     if v % 1 == 0: return f"{v:,.0f}"
-                     # Else return decimal format, strip trailing zeros
-                     return f"{v:,.2f}".rstrip('0').rstrip('.')
-
-                 cash_str = fmt(cash_val) if cash_val > 0 else "-"
+                 cash_in_str = fmt(cash_rec) if cash_rec > 0 else "-"
+                 cash_out_str = fmt(cash_paid) if cash_paid > 0 else "-"
                  
                  
                  # --- MULTI-CELL LOGIC FOR WRAPPING (WITH PADDING) ---
@@ -971,10 +965,11 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                  
                  # Remaining Columns
                  pdf.cell(w_qty, row_height, fmt(qty) if qty!=0 else "-", 1, 0, 'C')
-                 pdf.cell(w_rate, row_height, fmt(rate) if rate!=0 else "-", 1, 0, 'C')
+                 pdf.cell(w_rate, row_height, fmt(rate) if rate!=0 else "-", 1, 0, 'R')
                  pdf.cell(w_disc, row_height, fmt(disc) if disc > 0 else "-", 1, 0, 'C')
-                 pdf.cell(w_tot, row_height, fmt(total_val), 1, 0, 'C')
-                 pdf.cell(w_cash, row_height, cash_str, 1, 1, 'C') # 1,1 moves to next line
+                 pdf.cell(w_tot, row_height, fmt(total_val), 1, 0, 'R')
+                 pdf.cell(w_cash_in, row_height, cash_in_str, 1, 0, 'R')
+                 pdf.cell(w_cash_out, row_height, cash_out_str, 1, 1, 'R') # 1,1 moves to next line
                  
                  # Explicitly set Y to bottom to be safe (cell 1,1 should handle it but consistent)
                  pdf.set_y(y_bottom)
@@ -1082,14 +1077,15 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
     if rows_printed < min_rows:
         for _ in range(min_rows - rows_printed):
              if is_batch:
-                 # Header: S#(8), Date(22), Item(43), Qty(12), Rate(25), Disc(25), Total(30), Cash(25)
-                 pdf.cell(8, 7, "", 1, 0, 'C')
-                 pdf.cell(22, 7, "", 1, 0, 'C')
-                 pdf.cell(43, 7, "", 1, 0, 'L')
-                 pdf.cell(12, 7, "", 1, 0, 'C')
+                 # Header: S#(7), Date(20), Item(40), Qty(10), Rate(20), Disc(18), Total(25), Cash Rec(25), Cash Paid(25)
+                 pdf.cell(7, 7, "", 1, 0, 'C')
+                 pdf.cell(20, 7, "", 1, 0, 'C')
+                 pdf.cell(40, 7, "", 1, 0, 'L')
+                 pdf.cell(10, 7, "", 1, 0, 'C')
+                 pdf.cell(20, 7, "", 1, 0, 'C')
+                 pdf.cell(18, 7, "", 1, 0, 'C')
                  pdf.cell(25, 7, "", 1, 0, 'C')
                  pdf.cell(25, 7, "", 1, 0, 'C')
-                 pdf.cell(30, 7, "", 1, 0, 'C')
                  pdf.cell(25, 7, "", 1, 1, 'C')
              elif is_receipt:
                  pass
@@ -1123,6 +1119,7 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
         pur_ret_t = 0.0
         cash_rec_t = 0.0
         cash_paid_t = 0.0
+        labour_cost_t = 0.0
         
         # Iterate to sum
         rows_iter = items_df.to_dict('records') if isinstance(items_df, pd.DataFrame) else items_df
@@ -1175,6 +1172,8 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                 sale_ret_t += r_total
             elif r_type in ["Purchase Return", "Return Item"]:
                 pur_ret_t += r_total
+            elif r_type in ["Labour Cost"]:
+                labour_cost_t += r_total
                 
             # If Type is Cash Received, total is 0 usually (we handled cash above), 
             # but if user put amount in Total col, we should have logic to move it?
@@ -1201,25 +1200,37 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
                  pdf.cell(45, 7, "Total Purchase Return:", 0, 0, 'R')
                  pdf.cell(35, 7, f"-{pur_ret_t:,.0f}", 1, 1, 'R')
 
-        # 3. Cash Received
+        # 3. Labour Cost Section
+        if labour_cost_t > 0:
+             pdf.cell(45, 7, "Labour Cost:", 0, 0, 'R')
+             pdf.cell(35, 7, f"{labour_cost_t:,.0f}", 1, 1, 'R')
+             
+        # 4. Extra Costs Section
+        extras = freight + misc
+        if extras > 0:
+             pdf.cell(45, 7, "Extra Costs:", 0, 0, 'R')
+             pdf.cell(35, 7, f"{extras:,.0f}", 1, 1, 'R')
+
+        # 5. Cash Received
         if cash_rec_t > 0:
              pdf.set_fill_color(230, 255, 230)
              pdf.cell(45, 7, "Cash Received:", 0, 0, 'R', 1)
              pdf.cell(35, 7, f"{cash_rec_t:,.0f}", 1, 1, 'R', 1)
 
-        # 4. Cash Paid
+        # 6. Cash Paid
         if cash_paid_t > 0:
              pdf.set_fill_color(255, 230, 230)
              pdf.cell(45, 7, "Cash Paid:", 0, 0, 'R', 1)
              pdf.cell(35, 7, f"{cash_paid_t:,.0f}", 1, 1, 'R', 1)
              
-        # 5. Balance Due (Current Invoice Net)
-        # Net = (Sales - S.Ret) - (Purch - P.Ret) - (CashIn - CashOut)
-        net_sale = sales_t - sale_ret_t
-        net_purch = purchase_t - pur_ret_t
-        net_cash = cash_rec_t - cash_paid_t
+        # 7. Balance Due (Current Invoice Net)
+        base_net_goods = (sales_t - sale_ret_t) - (purchase_t - pur_ret_t)
+        labour_sign = 1 if base_net_goods >= 0 else -1
+        net_goods = base_net_goods + (labour_cost_t * labour_sign)
         
-        current_net = net_sale - net_purch - net_cash
+        extras_sign = 1 if net_goods >= 0 else -1
+        
+        current_net = net_goods + (extras * extras_sign) - (cash_rec_t - cash_paid_t)
         
         # Override Outstanding Balance for Batch
         outstanding_balance = previous_balance + current_net
