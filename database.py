@@ -461,143 +461,222 @@ class DatabaseManager:
         """
         Advanced Database Query for Product History / Ledger.
         Returns a DataFrame with columns:
-        Date, Transaction_Type, Client_Name, Qty_Changed, Rate
+        Date, Transaction_Type, Client_Name, Description, Qty_Changed, Rate, Total_Amount
+        
+        Sources:
+          1. Sales table   -> Invoice entries (have customer_name + qty)
+          2. Purchases table -> Purchase entries (have supplier_name + qty)
+          3. Ledger table  -> Partners/Ledger stock entries (have party_name + qty + rate)
+          4. InventoryLogs -> Manual stock adjustments (fallback)
         """
         def clean_id(x):
             return str(x).replace('.0', '').strip()
 
         target_id = clean_id(item_id)
         
-        # We must look up item_name because Sales/Purchases tables only store item_name
+        # Look up item_name and rates from Inventory
         inv_df = self._read_data("Inventory")
         item_name_target = ""
         current_rate = 0.0
+        cost_rate = 0.0
         if not inv_df.empty:
             match = inv_df[inv_df['id'].astype(str).apply(clean_id) == target_id]
             if not match.empty:
                 item_name_target = str(match.iloc[0]['item_name']).strip().lower()
                 current_rate = float(match.iloc[0]['selling_price'])
+                cost_rate = float(match.iloc[0]['cost_price'])
 
-        # 1. Get Sales associated with this Item
+        # ---------- SOURCE 1: Sales Table (Invoice entries) ----------
         sales_df = self._read_data("Sales")
         sales_data = []
+        covered_sale_refs = set()
         if not sales_df.empty and 'item_name' in sales_df.columns:
             mask = sales_df['item_name'].astype(str).str.strip().str.lower() == item_name_target
             item_sales = sales_df[mask]
-            
             for _, row in item_sales.iterrows():
-                # For sales, qty withdrawn is negative
                 qty = float(row.get('quantity_sold', 0))
                 ret_qty = float(row.get('return_quantity', 0))
-                net_qty = -(qty - ret_qty) # Usually sold is negative for stock, return is positive
-                
-                # Check actual type if available
-                txn_type = row.get('type', 'Sale')
-                if not txn_type:
-                     txn_type = 'Sale'
+                txn_type = row.get('type', 'Sale') or 'Sale'
                 if txn_type in ["Sale Return", "Return"]:
-                    net_qty = abs(net_qty) if net_qty < 0 else net_qty # returns add to stock
-                elif txn_type in ["Sale", "Sale / Item"]:
+                    net_qty = abs(qty - ret_qty)
+                else:
                     net_qty = -abs(qty)
-                
+                inv_id = str(row.get('invoice_id', ''))
+                if inv_id:
+                    covered_sale_refs.add(inv_id)
+                rate = float(row.get('sale_price', 0.0))
                 sales_data.append({
                     "Date": row.get('sale_date'),
                     "Transaction_Type": txn_type,
-                    "Client_Name": row.get('customer_name', 'Unknown'),
-                    "Reference": row.get('invoice_id', ''),
+                    "Client_Name": str(row.get('customer_name', 'Unknown')),
+                    "Description": f"Invoice #{inv_id}" if inv_id else "Invoice",
                     "Qty_Changed": net_qty,
-                    "Rate": float(row.get('sale_price', 0.0))
+                    "Rate": rate,
+                    "Total_Amount": abs(net_qty) * rate,
+                    "_source_ref": inv_id
                 })
 
-        # 2. Get Purchases associated with this Item
+        # ---------- SOURCE 2: Purchases Table ----------
         purchases_df = self._read_data("Purchases")
         purchases_data = []
+        covered_purchase_refs = set()
         if not purchases_df.empty and 'item_name' in purchases_df.columns:
             mask = purchases_df['item_name'].astype(str).str.strip().str.lower() == item_name_target
             item_purchases = purchases_df[mask]
-            
             for _, row in item_purchases.iterrows():
-                # Purchases add to stock
-                txn_type = "Purchase/Add"
                 qty = float(row.get('quantity_bought', 0))
-                
+                pur_id = str(row.get('purchase_id', ''))
+                if pur_id:
+                    covered_purchase_refs.add(pur_id)
+                rate = float(row.get('unit_cost', 0.0))
                 purchases_data.append({
                     "Date": row.get('purchase_date'),
                     "Transaction_Type": "Buy / Purchase",
-                    "Client_Name": row.get('supplier_name', 'Unknown'),
-                    "Reference": row.get('purchase_id', ''),
+                    "Client_Name": str(row.get('supplier_name', 'Unknown')),
+                    "Description": f"Purchase #{pur_id}" if pur_id else "Purchase",
                     "Qty_Changed": qty,
-                    "Rate": float(row.get('unit_cost', 0.0))
+                    "Rate": rate,
+                    "Total_Amount": qty * rate,
+                    "_source_ref": pur_id
                 })
 
-        # 3. Get generic Inventory Logs that are NOT captured by Sales/Purchases
-        # (e.g. manual adjustments)
+        # ---------- SOURCE 3: Ledger Table (Partners & Ledger stock entries) ----------
+        # These are entries added via Partners & Ledger with a product selected.
+        # They have party_name (correct client name), quantity > 0, rate, and description
+        # that references the item name.
+        ledger_data_entries = []
+        ledger_df = self._read_data("Ledger")
+        if not ledger_df.empty and item_name_target:
+            # Filter rows where:
+            #   - description mentions the item name (case insensitive)
+            #   - quantity is non-zero (stock was tracked)
+            if 'quantity' in ledger_df.columns and 'description' in ledger_df.columns:
+                qty_col = pd.to_numeric(ledger_df['quantity'], errors='coerce').fillna(0)
+                desc_col = ledger_df['description'].astype(str).str.lower()
+                item_mask = (qty_col != 0) & desc_col.str.contains(item_name_target, na=False)
+                item_ledger = ledger_df[item_mask].copy()
+
+                for _, row in item_ledger.iterrows():
+                    qty = float(row.get('quantity', 0))
+                    rate = float(row.get('rate', 0.0)) if row.get('rate') else 0.0
+                    debit = float(row.get('debit', 0.0))
+                    credit = float(row.get('credit', 0.0))
+                    ref_no = str(row.get('ref_no', ''))
+                    desc = str(row.get('description', ''))
+                    client = str(row.get('party_name', 'Unknown'))
+
+                    # Skip if this is already covered by a Sale/Purchase invoice
+                    if ref_no and (ref_no in covered_sale_refs or ref_no in covered_purchase_refs):
+                        continue
+
+                    # Determine transaction type and qty sign from debit/credit
+                    # Debit = customer owes us = Sale (stock out, negative)
+                    # Credit = we owe supplier = Purchase (stock in, positive)
+                    raw_desc_lower = desc.lower()
+                    if 'purchase' in raw_desc_lower or 'sale return' in raw_desc_lower:
+                        # Stock IN
+                        signed_qty = abs(qty)
+                        txn_type = "Buy / Purchase"
+                    elif 'purchase return' in raw_desc_lower:
+                        # Stock OUT (returning goods)
+                        signed_qty = -abs(qty)
+                        txn_type = "Purchase Return"
+                    elif 'sale' in raw_desc_lower:
+                        # Stock OUT
+                        signed_qty = -abs(qty)
+                        txn_type = "Sell"
+                    else:
+                        # Fallback: use debit/credit to determine direction
+                        if credit > 0:
+                            signed_qty = abs(qty)  # Credit = stock in
+                            txn_type = "Buy / Purchase"
+                        else:
+                            signed_qty = -abs(qty)  # Debit = stock out
+                            txn_type = "Sell"
+
+                    total = abs(qty) * rate if rate > 0 else max(debit, credit)
+
+                    ledger_data_entries.append({
+                        "Date": str(row.get('date', '')),
+                        "Transaction_Type": txn_type,
+                        "Client_Name": client,
+                        "Description": desc,
+                        "Qty_Changed": signed_qty,
+                        "Rate": rate,
+                        "Total_Amount": total,
+                        "_source_ref": ref_no
+                    })
+
+        # ---------- SOURCE 4: InventoryLogs (manual adjustments - fallback) ----------
         raw_logs = self.get_inventory_logs(item_id)
         logs_data = []
-        
-        # We need a set of dates/changes covered to avoid duplication
-        # Or checking references if they exist
-        covered_refs = set([s['Reference'] for s in sales_data if s['Reference']] + [p['Reference'] for p in purchases_data if p['Reference']])
+        all_covered_refs = (
+            covered_sale_refs | covered_purchase_refs |
+            {e['_source_ref'] for e in ledger_data_entries if e['_source_ref']}
+        )
 
         for _, row in raw_logs.iterrows():
             ref = str(row.get('reference', ''))
             reason = str(row.get('reason', ''))
-            
-            # Decide if we skip this log (if it's already in covered_refs and it's an Invoice/Purchase)
-            if ref and ref in covered_refs:
+            desc_log = str(row.get('description', ''))
+
+            # Skip if already captured by Sales / Purchases / Ledger
+            if ref and ref in all_covered_refs:
                 continue
-                
+            # Skip rows whose reference is 'Invoice/Bill' — they are covered by the Ledger source above
+            # (these were logged by adjust_inventory_quantity from Partners & Ledger)
+            if ref in ('Invoice/Bill',):
+                # Only keep if NOT already present via Ledger entries (check by timestamp proximity is hard,
+                # so we skip duplicates conservatively here when Ledger source has entries)
+                if ledger_data_entries:
+                    continue
+
             qty_change = float(row.get('change', 0))
-            txn_type = reason if reason else "Adjustment"
-            
-            # In manual updates, 'reference' is used in the UI to store "Reference / Client"
-            # So if a reference exists, we should treat it as the Client Name.
-            client = ref if ref else "Admin"
-            
-            # Try to determine if it's an addition or removal for naming
+            if qty_change == 0:
+                continue
+
+            # The reference field now stores the actual party name (after our fix)
+            client = ref if (ref and ref not in ('Invoice/Bill', 'nan', '')) else "Admin"
+
             if qty_change > 0:
-                txn_type = "Buy"
-            elif qty_change < 0:
-                txn_type = "Sell"
-                
-            # Rate determination:
-            # If they bought (added) it implies they bought at cost price.
-            # If they sold (removed) it implies they sold at selling price.
-            if qty_change > 0:
-                # Need to lookup cost price
-                rate = 0.0
-                if not inv_df.empty and item_name_target:
-                    match = inv_df[inv_df['item_name'].astype(str).str.strip().str.lower() == item_name_target]
-                    if not match.empty:
-                        rate = float(match.iloc[0]['cost_price'])
+                txn_type = "Buy / Purchase"
+                rate = cost_rate
             else:
-                rate = current_rate # Selling price
-                
+                txn_type = "Sell"
+                rate = current_rate
+
             logs_data.append({
                 "Date": row.get('timestamp'),
                 "Transaction_Type": txn_type,
                 "Client_Name": client,
-                "Reference": ref,
+                "Description": desc_log if desc_log else txn_type,
                 "Qty_Changed": qty_change,
-                "Rate": rate
+                "Rate": rate,
+                "Total_Amount": abs(qty_change) * rate,
+                "_source_ref": ref
             })
 
-        # 4. Combine all and sort by Date descending
-        all_data = sales_data + purchases_data + logs_data
+        # ---------- Combine all sources ----------
+        all_data = sales_data + purchases_data + ledger_data_entries + logs_data
         
         if not all_data:
-            return pd.DataFrame(columns=["Date", "Transaction_Type", "Client_Name", "Qty_Changed", "Rate"])
+            return pd.DataFrame(columns=["Date", "Transaction_Type", "Client_Name", "Description", "Qty_Changed", "Rate", "Total_Amount"])
             
         combined_df = pd.DataFrame(all_data)
         
-        # Ensure Date column is datetime for sorting
+        # Drop internal tracking column
+        if '_source_ref' in combined_df.columns:
+            combined_df = combined_df.drop(columns=['_source_ref'])
+        
+        # Sort by Date descending
         combined_df['Date_Parsed'] = pd.to_datetime(combined_df['Date'], errors='coerce')
         combined_df = combined_df.sort_values(by='Date_Parsed', ascending=False)
         combined_df = combined_df.drop(columns=['Date_Parsed'])
         
-        # Drop reference as per user request
-        if 'Reference' in combined_df.columns:
-            combined_df = combined_df.drop(columns=['Reference'])
+        # Ensure Total_Amount is numeric
+        combined_df['Total_Amount'] = pd.to_numeric(combined_df['Total_Amount'], errors='coerce').fillna(0.0)
+        combined_df['Qty_Changed'] = pd.to_numeric(combined_df['Qty_Changed'], errors='coerce').fillna(0.0)
+        combined_df['Rate'] = pd.to_numeric(combined_df['Rate'], errors='coerce').fillna(0.0)
         
         return combined_df
 
@@ -1434,6 +1513,29 @@ class DatabaseManager:
         
         return float(balance)
 
+    def get_all_employees_payroll_summary(self):
+        """
+        Returns a dict keyed by employee_name with payroll summary:
+            total_earned  – sum of all 'earned' entries
+            total_paid    – sum of all 'paid' entries (already taken)
+            balance       – total_earned - total_paid (payable / outstanding)
+        Reads EmployeeLedger only once for efficiency.
+        """
+        df = self._read_data("EmployeeLedger")
+        summary = {}
+        if df.empty:
+            return summary
+
+        for name, grp in df.groupby("employee_name"):
+            earned = float(pd.to_numeric(grp["earned"], errors="coerce").fillna(0).sum())
+            paid   = float(pd.to_numeric(grp["paid"],   errors="coerce").fillna(0).sum())
+            summary[name] = {
+                "total_earned": earned,
+                "total_paid":   paid,
+                "balance":      earned - paid,
+            }
+        return summary
+
     # --- Client Directory Methods ---
     def add_customer(self, name, city, phone, opening_balance, address="", nic=""):
         df = self._read_data("Customers")
@@ -1907,11 +2009,12 @@ class DatabaseManager:
         # Return first match as dict
         return item.iloc[0].to_dict()
 
-    def adjust_inventory_quantity(self, item_name, delta_qty):
+    def adjust_inventory_quantity(self, item_name, delta_qty, party_name=""):
         """
-        Adjust quantity by delta_qty. 
-        delta_qty > 0 (Purchase/Return)
-        delta_qty < 0 (Sale)
+        Adjust quantity by delta_qty.
+        delta_qty > 0 (Purchase/Stock In)
+        delta_qty < 0 (Sale/Stock Out)
+        party_name: The actual client/supplier name for the log reference.
         """
         df = self._read_data("Inventory")
         if df.empty: return False, "Inventory not initialized"
@@ -1924,19 +2027,78 @@ class DatabaseManager:
         current_qty = int(df.at[idx, 'quantity'])
         new_qty = current_qty + delta_qty
         
-        # Allow negative (monitor overselling) but maybe log it specially?
-        
         df.at[idx, 'quantity'] = new_qty
         self._write_data("Inventory", df)
         
-        # Log it
-        # Try to find item_id
+        # Log it — use the actual party_name as reference so product ledger shows correct client
         item_id = df.at[idx, 'id']
-        
         action = "Increase" if delta_qty > 0 else "Decrease"
+        # Use party_name as the reference (client name in product ledger); fallback to empty string
+        log_ref = party_name if party_name else ""
         self.log_inventory_change(
-            item_id, item_name, delta_qty, 
-            "Transaction", 
-            "Invoice/Bill", f"{action} by {abs(delta_qty)}"
+            item_id, item_name, delta_qty,
+            "Transaction",
+            log_ref, f"{action} by {abs(delta_qty)}"
         )
         return True, new_qty
+
+    # --- Bank System Methods ---
+
+    def add_bank_transaction(self, date_val, description, amount, txn_type, category="Other"):
+        """
+        Records a bank transaction.
+        txn_type: "IN"  (payment received / deposit)
+                  "OUT" (payment made / withdrawal)
+        """
+        df = self._read_data("BankTransactions")
+        if df.empty:
+            df = pd.DataFrame(columns=["id", "date", "description", "amount", "txn_type", "category"])
+
+        new_id = self._get_next_id(df)
+        date_val = str(date_val) if date_val else datetime.now().strftime('%Y-%m-%d')
+
+        new_row = pd.DataFrame([{
+            "id": new_id,
+            "date": date_val,
+            "description": description,
+            "amount": float(amount),
+            "txn_type": txn_type,   # "IN" or "OUT"
+            "category": category
+        }])
+
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        self._write_data("BankTransactions", updated_df)
+
+    def get_bank_transactions(self, start_date=None, end_date=None):
+        """
+        Returns bank transactions, optionally filtered by date range.
+        Sorted newest first.
+        """
+        df = self._read_data("BankTransactions")
+        if df.empty:
+            return pd.DataFrame(columns=["id", "date", "description", "amount", "txn_type", "category"])
+
+        if start_date:
+            df = df[df['date'].astype(str) >= str(start_date)]
+        if end_date:
+            df = df[df['date'].astype(str) <= str(end_date)]
+
+        # Sort newest first
+        df = df.sort_values(by='id', ascending=False).reset_index(drop=True)
+        return df
+
+    def get_bank_summary(self):
+        """
+        Returns (total_in, total_out, balance) across all transactions.
+        """
+        df = self._read_data("BankTransactions")
+        if df.empty:
+            return 0.0, 0.0, 0.0
+
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+
+        total_in  = df[df['txn_type'] == "IN"]['amount'].sum()
+        total_out = df[df['txn_type'] == "OUT"]['amount'].sum()
+        balance   = total_in - total_out
+
+        return float(total_in), float(total_out), float(balance)

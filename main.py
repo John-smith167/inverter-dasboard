@@ -840,6 +840,9 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
     pdf.set_font("Arial", size=10) # Smaller font for rows
     rows_printed = 0
     
+    # Helper formatter (used by all row types)
+    fmt = lambda v: "-" if v==0 else (f"{v:,.0f}" if v%1==0 else f"{v:,.2f}".rstrip('0').rstrip('.'))
+    
     # X Positions for Batch
     x_start = 10
     w_sn, w_dt, w_desc, w_qty, w_rate, w_disc, w_tot, w_cash_in, w_cash_out = 7, 20, 40, 10, 20, 18, 25, 25, 25
@@ -2739,6 +2742,12 @@ if menu == "⚡ Quick Invoice":
                      success = db.record_batch_transactions(next_inv, customer_name, backend_df, 0, 0, val_show)
                      
                      if success:
+                         # --- AUTO-RECORD BANK TRANSACTIONS ---
+                         if total_cash_in > 0:
+                             db.add_bank_transaction(inv_date, f"Cash Received - {customer_name} (Inv#{next_inv})", total_cash_in, "IN", "Customer Payment")
+                         if total_cash_out > 0:
+                             db.add_bank_transaction(inv_date, f"Cash Paid - {customer_name} (Inv#{next_inv})", total_cash_out, "OUT", "Supplier Payment")
+
                          # PDF Generation
                          gross_items_total = valid_items['Total'].sum()
                          gross_pdf_total = gross_items_total + freight + misc
@@ -3152,27 +3161,35 @@ elif menu == "📦 Product Inventory":
                 current_stock = full_inv[full_inv['id'] == sel_id]['quantity'].values[0] if not full_inv[full_inv['id'] == sel_id].empty else 0
                 
                 if not logs.empty:
-                    # Metrics Calculation
                     total_in = logs[logs['Qty_Changed'] > 0]['Qty_Changed'].sum()
                     total_out = abs(logs[logs['Qty_Changed'] < 0]['Qty_Changed'].sum())
-                    
+
+                    # Calculate total sell / buy amounts
+                    sell_rows = logs[logs['Qty_Changed'] < 0]
+                    buy_rows  = logs[logs['Qty_Changed'] > 0]
+                    total_sell_amt = sell_rows['Total_Amount'].sum() if 'Total_Amount' in logs.columns else (sell_rows['Qty_Changed'].abs() * sell_rows['Rate']).sum()
+                    total_buy_amt  = buy_rows['Total_Amount'].sum()  if 'Total_Amount' in logs.columns else (buy_rows['Qty_Changed'].abs()  * buy_rows['Rate']).sum()
+
                     # Calculate Top Buyer (who bought the most quantity)
                     sales_only = logs[logs['Qty_Changed'] < 0] # Removed stock is negative
                     top_buyer = "N/A"
                     if not sales_only.empty:
-                        # group by client name, sum the absolute qty changed
                         sales_grouped = sales_only.copy()
                         sales_grouped['Abs_Qty'] = sales_grouped['Qty_Changed'].abs()
                         buyer_totals = sales_grouped.groupby('Client_Name')['Abs_Qty'].sum().reset_index()
                         top_buyer_row = buyer_totals.sort_values(by='Abs_Qty', ascending=False).iloc[0]
                         top_buyer = f"{top_buyer_row['Client_Name']} ({int(top_buyer_row['Abs_Qty'])})"
 
-                    # Display Top Metrics
+                    # Display Top Metrics  — 2 rows: stock counts + financial totals
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("Current Stock", f"{int(current_stock)} Units")
                     m2.metric("Total Bought (In)", f"{int(total_in)} Units")
                     m3.metric("Total Sold (Out)", f"{int(total_out)} Units")
                     m4.metric("🏆 Top Buyer", str(top_buyer))
+
+                    fm1, fm2 = st.columns(2)
+                    fm1.metric("💰 Total Sell Amount", f"Rs. {total_sell_amt:,.0f}")
+                    fm2.metric("🛒 Total Buy Amount", f"Rs. {total_buy_amt:,.0f}")
                     
                     st.divider()
 
@@ -3197,8 +3214,10 @@ elif menu == "📦 Product Inventory":
                             "Date": "Date",
                             "Transaction_Type": "Type",
                             "Client_Name": "Client Name",
+                            "Description": "Description",
                             "Qty_Changed": st.column_config.NumberColumn("Change", format="%+d"),
-                            "Rate": st.column_config.NumberColumn("Rate", format="Rs. %.2f")
+                            "Rate": st.column_config.NumberColumn("Rate", format="Rs. %.2f"),
+                            "Total_Amount": st.column_config.NumberColumn("Total Amount", format="Rs. %.0f")
                         },
                         hide_index=True
                     )
@@ -3302,7 +3321,111 @@ elif menu == "📊 Business Reports":
     st.divider()
 
 
+    # --- SECTION B: BANK SYSTEM ---
+    st.header("🏦 Bank System")
+    st.caption("Track all money coming in and going out through the bank.")
+
+    # Fetch bank summary
+    bank_in, bank_out, bank_balance = db.get_bank_summary()
+
+    # Summary Cards
+    b_col1, b_col2, b_col3 = st.columns(3)
+    with b_col1:
+        st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #9ece6a;">
+            <div class="sub-text">🟢 Total Payment In</div>
+            <div style="font-size:2rem; font-weight:bold; color:#9ece6a;">Rs. {bank_in:,.0f}</div>
+        </div>""", unsafe_allow_html=True)
+    with b_col2:
+        st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #f7768e;">
+            <div class="sub-text">🔴 Total Payment Out</div>
+            <div style="font-size:2rem; font-weight:bold; color:#f7768e;">Rs. {bank_out:,.0f}</div>
+        </div>""", unsafe_allow_html=True)
+    with b_col3:
+        bal_color = "#7aa2f7" if bank_balance >= 0 else "#f7768e"
+        bal_icon  = "💰" if bank_balance >= 0 else "⚠️"
+        st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid {bal_color};">
+            <div class="sub-text">{bal_icon} Current Balance</div>
+            <div style="font-size:2rem; font-weight:bold; color:{bal_color};">Rs. {bank_balance:,.0f}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.write("")  # spacer
+
+    # Record Transactions side-by-side
+    bankin_col, bankout_col = st.columns(2)
+
+    with bankin_col:
+        with st.expander("➕ Record Payment In", expanded=False):
+            with st.form("bank_in_form"):
+                bi_date  = st.date_input("Date", value=datetime.now().date(), key="bi_date")
+                bi_desc  = st.text_input("Description (e.g., Customer Payment, Cash Deposit)")
+                bi_cat   = st.selectbox("Category", ["Customer Payment", "Cash Deposit", "Loan Received", "Other"], key="bi_cat")
+                bi_amt   = st.number_input("Amount (Rs.)", min_value=0.01, step=100.0, key="bi_amt")
+                if st.form_submit_button("✅ Record Payment In", type="primary"):
+                    if bi_desc and bi_amt > 0:
+                        db.add_bank_transaction(bi_date, bi_desc, bi_amt, "IN", bi_cat)
+                        st.toast("Payment In Recorded!", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error("Please enter description and amount.")
+
+    with bankout_col:
+        with st.expander("➖ Record Payment Out", expanded=False):
+            with st.form("bank_out_form"):
+                bo_date  = st.date_input("Date", value=datetime.now().date(), key="bo_date")
+                bo_desc  = st.text_input("Description (e.g., Supplier Payment, Utility Bill)")
+                bo_cat   = st.selectbox("Category", ["Supplier Payment", "Expense", "Loan Repayment", "Salary", "Other"], key="bo_cat")
+                bo_amt   = st.number_input("Amount (Rs.)", min_value=0.01, step=100.0, key="bo_amt")
+                if st.form_submit_button("✅ Record Payment Out", type="primary"):
+                    if bo_desc and bo_amt > 0:
+                        db.add_bank_transaction(bo_date, bo_desc, bo_amt, "OUT", bo_cat)
+                        st.toast("Payment Out Recorded!", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error("Please enter description and amount.")
+
+    # Transaction History
+    st.subheader("📋 Transaction History")
+    bh_c1, bh_c2 = st.columns(2)
+    bh_start = bh_c1.date_input("From Date", value=None, key="bh_start")
+    bh_end   = bh_c2.date_input("To Date",   value=None, key="bh_end")
+
+    bank_txns = db.get_bank_transactions(
+        start_date=str(bh_start) if bh_start else None,
+        end_date=str(bh_end)     if bh_end   else None
+    )
+
+    if not bank_txns.empty:
+        # Colour-code txn_type
+        def style_bank_txn(val):
+            if val == "IN":
+                return "color: #9ece6a; font-weight: bold;"
+            elif val == "OUT":
+                return "color: #f7768e; font-weight: bold;"
+            return ""
+
+        styled_bank = bank_txns[['date', 'description', 'category', 'txn_type', 'amount']].style.map(
+            style_bank_txn, subset=['txn_type']
+        )
+        st.dataframe(
+            styled_bank,
+            width="stretch",
+            column_config={
+                "date":        st.column_config.TextColumn("Date"),
+                "description": st.column_config.TextColumn("Description"),
+                "category":    st.column_config.TextColumn("Category"),
+                "txn_type":    st.column_config.TextColumn("In / Out"),
+                "amount":      st.column_config.NumberColumn("Amount", format="Rs. %.0f"),
+            },
+            hide_index=True
+        )
+    else:
+        st.info("No bank transactions recorded yet. Use the forms above to get started.")
+
+    st.divider()
+
+
     # --- SECTION C: STOCK VALUATION (Prominent) ---
+
     stock_value = db.get_inventory_valuation()
     st.header(f"📦 Total Stock Value: :green[Rs. {stock_value:,.2f}]")
     
@@ -3666,7 +3789,7 @@ elif menu == "👥 Partners & Ledger":
                               delta = -q_curr # Decrease Stock
                               
                           if delta != 0:
-                              db.adjust_inventory_quantity(selected_item_name, delta)
+                              db.adjust_inventory_quantity(selected_item_name, delta, party_name=current_party)
                                
                       # Determine Debit/Credit based on Mode
                       if is_pur or is_sale_ret:
@@ -3699,9 +3822,13 @@ elif menu == "👥 Partners & Ledger":
                           if is_pur or is_pur_ret or is_cash_paid:
                               # We paid them -> Debit them (Reduces liability)
                               db.add_ledger_entry(current_party, cash_desc, cash_to_process, 0.0, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
+                              # --- AUTO-RECORD BANK: Cash Out ---
+                              db.add_bank_transaction(d_val, f"Cash Paid - {current_party}: {cash_desc}", cash_to_process, "OUT", "Supplier Payment")
                           else:
                               # They paid us -> Credit them (Reduces asset)
                               db.add_ledger_entry(current_party, cash_desc, 0.0, cash_to_process, d_val, quantity=0, rate=0.0, discount=0.0, ref_no=ref_val)
+                              # --- AUTO-RECORD BANK: Cash In ---
+                              db.add_bank_transaction(d_val, f"Cash Received - {current_party}: {cash_desc}", cash_to_process, "IN", "Customer Payment")
                               
                           entries_added += 1
                   
@@ -4101,6 +4228,7 @@ elif menu == "👷 Staff & Payroll":
             # Optimization: Fetch stats once
             workload_df = db.get_employee_workload()
             perf_df = db.get_employee_performance()
+            payroll_summary = db.get_all_employees_payroll_summary()
             
             e_cols = st.columns(3)
             for idx, row in emp.iterrows():
@@ -4119,7 +4247,46 @@ elif menu == "👷 Staff & Payroll":
                     if active_jobs > 5:
                         load_badge = f"<span style='background:#f7768e; color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold; margin-left:5px;'>🔥 High Load</span>"
                     
-                    st.markdown(f"""<div class="modern-card" style="text-align:center;"><div style="font-size:3rem; margin-bottom:10px;">👤</div><div class="big-text">{row['name']} {load_badge}</div><div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div><div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div><div style="margin-bottom:10px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div><hr style="border-color:#2c2f3f;"><div style="font-size:0.8rem; color:#a9b1d6;">ID: {row['id']} • Active</div></div>""", unsafe_allow_html=True)
+                    # --- Payroll Summary for this employee ---
+                    emp_pay = payroll_summary.get(row['name'], {})
+                    total_earned = emp_pay.get('total_earned', 0.0)
+                    total_paid   = emp_pay.get('total_paid',   0.0)
+                    balance      = emp_pay.get('balance',      0.0)
+
+                    if balance > 0:
+                        bal_color = "#9ece6a"
+                        bal_label = f"💸 Payable: Rs. {balance:,.0f}"
+                    elif balance < 0:
+                        bal_color = "#f7768e"
+                        bal_label = f"⚠️ Advance: Rs. {abs(balance):,.0f}"
+                    else:
+                        bal_color = "#a9b1d6"
+                        bal_label = "⚪ Settled"
+
+                    st.markdown(f"""
+<div class="modern-card" style="text-align:center;">
+  <div style="font-size:3rem; margin-bottom:10px;">👤</div>
+  <div class="big-text">{row['name']} {load_badge}</div>
+  <div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div>
+  <div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div>
+  <div style="margin-bottom:8px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div>
+  <hr style="border-color:#2c2f3f; margin:8px 0;">
+  <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:4px;">
+    <span style="color:#a9b1d6;">💰 Total Payable</span>
+    <span style="font-weight:bold; color:#e0af68;">Rs. {total_earned:,.0f}</span>
+  </div>
+  <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:4px;">
+    <span style="color:#a9b1d6;">✅ Already Taken</span>
+    <span style="font-weight:bold; color:#7dcfff;">Rs. {total_paid:,.0f}</span>
+  </div>
+  <div style="display:flex; justify-content:space-between; font-size:0.88rem; font-weight:bold; margin-top:6px; padding:6px 8px; background:#1a1c24; border-radius:6px; border:1px solid {bal_color};">
+    <span style="color:#a9b1d6;">Outstanding</span>
+    <span style="color:{bal_color};">{bal_label}</span>
+  </div>
+  <hr style="border-color:#2c2f3f; margin:8px 0;">
+  <div style="font-size:0.8rem; color:#a9b1d6;">ID: {row['id']} • Active</div>
+</div>
+""", unsafe_allow_html=True)
                     
                     # ACTION BUTTONS
                     btn_col1, btn_col2, btn_col3 = st.columns(3)
