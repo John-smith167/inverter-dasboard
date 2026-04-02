@@ -2059,7 +2059,7 @@ def employee_payroll_dialog(emp_id, emp_name):
                     if desc_input:
                         description += f" - {desc_input}"
                         
-                    db.add_employee_ledger_entry(emp_name, w_date, "Work Log", description, total_earning, 0.0)
+                    db.add_employee_ledger_entry(emp_name, w_date, "Work Log", description, total_earning, 0.0, units=units)
                     st.toast(f"✅ Work log added! Earned: Rs. {total_earning:,.2f}", icon="✅")
                     st.success(f"✅ Work log added! Earned: Rs. {total_earning:,.2f}")
                     time.sleep(1)
@@ -2076,10 +2076,16 @@ def employee_payroll_dialog(emp_id, emp_name):
             amount = st.number_input("Amount Given (Rs.)", min_value=0.0, value=0.0, step=100.0)
             p_type = st.radio("Payment Type", ["Salary Payment", "Advance/Loan"], horizontal=True)
             
+            # Additional Description
+            desc_input = st.text_input("Description (Optional)", placeholder="e.g. March Salary, Bonus, Part-time...")
+
             if st.form_submit_button("Record Payment", type="primary", width="stretch"):
                 if amount > 0:
                     description = f"{p_type} - Rs. {amount:,.2f}"
-                    db.add_employee_ledger_entry(emp_name, p_date, p_type, description, 0.0, amount)
+                    if desc_input:
+                        description += f" - {desc_input}"
+                        
+                    db.add_employee_ledger_entry(emp_name, p_date, p_type, description, 0.0, amount, units=0)
                     st.toast(f"✅ Payment recorded! Paid: Rs. {amount:,.2f}", icon="✅")
                     st.success(f"✅ Payment recorded! Paid: Rs. {amount:,.2f}")
                     time.sleep(1)
@@ -2189,6 +2195,13 @@ if 'page' not in st.session_state:
 
 def update_nav():
     st.session_state.page = st.session_state.nav_radio
+    # Clear temporary session states on nav change
+    if 'active_payroll_emp' in st.session_state:
+        del st.session_state['active_payroll_emp']
+    if 'ledger_view_employee' in st.session_state:
+        del st.session_state['ledger_view_employee']
+    if 'ledger_view_party' in st.session_state:
+        del st.session_state['ledger_view_party']
 
 # --- SIDEBAR NAV ---
 with st.sidebar:
@@ -2923,20 +2936,12 @@ if menu == "⚡ Quick Invoice":
                      }
                      disp_ph.rename(columns=rename_dict, inplace=True)
                      
-                     st.dataframe(disp_ph, width="stretch")
-                     
                      # Calculations
                      if 'Total' in disp_ph.columns:
                         subtotal_h = disp_ph['Total'].sum()
                      else:
                         subtotal_h = 0.0
 
-                     # ... (Lines 2481-2558 remain same logic, skipping for brevity in replacement if possible) ...
-                     # Actually, I need to update rename_map significantly down.
-                     # Splitting this into 2 replacements might be safer if chunk is too big?
-                     # Lines 2472 to 2570 is big. 
-                     # I will do just the Display part first.
-                     
                      # Try to get Grand Total from Ledger to infer Freight/Misc
                      ledger_total = db.get_invoice_total_from_ledger(search_inv_input)
                      
@@ -2944,20 +2949,24 @@ if menu == "⚡ Quick Invoice":
                      cash_received_h = db.get_cash_received_for_invoice(search_inv_input)
                      
                      # ADD TO TABLE: specific request to show cash received in table
-                     if cash_received_h > 0:
+                     has_cash_in_items = False
+                     if not items_df.empty and 'type' in items_df.columns:
+                         has_cash_in_items = items_df['type'].astype(str).str.contains("Cash Received", case=False).any()
+                     
+                     if cash_received_h > 0 and not has_cash_in_items:
                          # Create a row for Cash Received
                          cr_row = pd.DataFrame([{
                              'Item Name': "💰 **Cash Received**",
-                             'Qty': 0,
-                             'Rate': 0,
-                             'Return Qty': 0,
+                             'Qty': 1,
+                             'Rate': cash_received_h,
+                             'Discount': 0,
                              'Total': cash_received_h 
                          }])
                          if not cr_row.empty:
                              disp_ph = pd.concat([disp_ph, cr_row], ignore_index=True)
-                         # Update table display to show cash row? User asked for visibility.
-                         # Rerendering dataframe with cash row is better.
-                         st.dataframe(disp_ph, width="stretch")
+                     
+                     # Display the consolidated table
+                     st.dataframe(disp_ph, width="stretch")
 
                      
                      # Inferred Extras
@@ -3003,11 +3012,8 @@ if menu == "⚡ Quick Invoice":
                          prev_bal_p = cur_bal_p - ledger_total + cash_received_h
                          
                          # Prepare DF for PDF (Rename columns check)
-                         # Check if it looks like a batch invoice? 
-                         # Let's check items for "Type" column
-                         # Check if it looks like a batch invoice? 
-                         # Let's check items for "Type" column
-                         is_batch_reprint = 'Type' in items_df.columns and items_df['Type'].notnull().any()
+                         # Detect if it's a batch invoice by checking 'type' column
+                         is_batch_reprint = 'type' in items_df.columns and items_df['type'].notnull().any()
                          
                          pdf_items = items_df.copy()
                          
@@ -4122,7 +4128,7 @@ elif menu == "👷 Staff & Payroll":
                     paid = t_amount if "Paid" in t_type else 0.0
                     entry_type = "Work Log" if "Earned" in t_type else "Salary Payment"
                     
-                    db.add_employee_ledger_entry(current_employee, t_date, entry_type, t_desc, earned, paid)
+                    db.add_employee_ledger_entry(current_employee, t_date, entry_type, t_desc, earned, paid, units=0)
                     st.toast("Entry Added Successfully!", icon="✅")
                     st.success("Entry Added!")
                     time.sleep(1)
@@ -4252,6 +4258,7 @@ elif menu == "👷 Staff & Payroll":
                     total_earned = emp_pay.get('total_earned', 0.0)
                     total_paid   = emp_pay.get('total_paid',   0.0)
                     balance      = emp_pay.get('balance',      0.0)
+                    total_units  = emp_pay.get('total_units',  0)
 
                     if balance > 0:
                         bal_color = "#9ece6a"
@@ -4269,7 +4276,8 @@ elif menu == "👷 Staff & Payroll":
   <div class="big-text">{row['name']} {load_badge}</div>
   <div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div>
   <div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div>
-  <div style="margin-bottom:8px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div>
+  <div style="font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div>
+  <div style="margin-bottom:8px; font-weight:bold; color:#7aa2f7;">🛠️ Total Units Fixed: {total_units}</div>
   <hr style="border-color:#2c2f3f; margin:8px 0;">
   <div style="display:flex; justify-content:space-between; font-size:0.82rem; margin-bottom:4px;">
     <span style="color:#a9b1d6;">💰 Total Payable</span>
@@ -4292,6 +4300,9 @@ elif menu == "👷 Staff & Payroll":
                     btn_col1, btn_col2, btn_col3 = st.columns(3)
                     with btn_col1:
                         if st.button(f"View Data", key=f"emp_btn_{row['id']}", width="stretch"):
+                            # Clear other dialog states
+                            if 'active_payroll_emp' in st.session_state:
+                                del st.session_state['active_payroll_emp']
                             # Robust field access with fallback
                             p = row['phone'] if 'phone' in row else ''
                             c = row['cnic'] if 'cnic' in row else ''

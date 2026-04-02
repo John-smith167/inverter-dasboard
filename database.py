@@ -472,6 +472,9 @@ class DatabaseManager:
         def clean_id(x):
             return str(x).replace('.0', '').strip()
 
+        def norm_ref(x):
+            return str(x).strip().upper()
+
         target_id = clean_id(item_id)
         
         # Look up item_name and rates from Inventory
@@ -497,13 +500,17 @@ class DatabaseManager:
                 qty = float(row.get('quantity_sold', 0))
                 ret_qty = float(row.get('return_quantity', 0))
                 txn_type = row.get('type', 'Sale') or 'Sale'
+                # Skip non-stock movements like Labour, Cash Only rows in Sales table
+                if txn_type not in ["Sale", "Sale / Item", "Sale Return", "Return"]:
+                    continue
+
                 if txn_type in ["Sale Return", "Return"]:
                     net_qty = abs(qty - ret_qty)
                 else:
                     net_qty = -abs(qty)
                 inv_id = str(row.get('invoice_id', ''))
                 if inv_id:
-                    covered_sale_refs.add(inv_id)
+                    covered_sale_refs.add(norm_ref(inv_id))
                 rate = float(row.get('sale_price', 0.0))
                 sales_data.append({
                     "Date": row.get('sale_date'),
@@ -527,7 +534,7 @@ class DatabaseManager:
                 qty = float(row.get('quantity_bought', 0))
                 pur_id = str(row.get('purchase_id', ''))
                 if pur_id:
-                    covered_purchase_refs.add(pur_id)
+                    covered_purchase_refs.add(norm_ref(pur_id))
                 rate = float(row.get('unit_cost', 0.0))
                 purchases_data.append({
                     "Date": row.get('purchase_date'),
@@ -566,7 +573,8 @@ class DatabaseManager:
                     client = str(row.get('party_name', 'Unknown'))
 
                     # Skip if this is already covered by a Sale/Purchase invoice
-                    if ref_no and (ref_no in covered_sale_refs or ref_no in covered_purchase_refs):
+                    n_ref = norm_ref(ref_no)
+                    if ref_no and (n_ref in covered_sale_refs or n_ref in covered_purchase_refs):
                         continue
 
                     # Determine transaction type and qty sign from debit/credit
@@ -664,9 +672,22 @@ class DatabaseManager:
             
         combined_df = pd.DataFrame(all_data)
         
-        # Drop internal tracking column
+        # --- ROBUST DE-DUPLICATION ---
+        # Sometimes a transaction is both in 'Sales' and 'Ledger'
+        # Or 'Purchases' and 'Ledger'.
+        # We use a composite key of Date, Client_Name, Qty_Changed, and Rate to find duplicates
+        # that might have missed the _source_ref check.
+        # But FIRST, let's just make sure we don't have exact duplicates.
+        
         if '_source_ref' in combined_df.columns:
+            # We already did ref-based skipping in Source 3 and 4, 
+            # but let's do a final pass on the combined data.
+            # Sort so that non-empty refs are preferred if combined? 
+            # Actually, the skipping logic inside the sources is better.
             combined_df = combined_df.drop(columns=['_source_ref'])
+
+        # Drop duplicates where all displayed columns match exactly
+        combined_df = combined_df.drop_duplicates(subset=["Date", "Transaction_Type", "Client_Name", "Description", "Qty_Changed", "Rate", "Total_Amount"])
         
         # Sort by Date descending
         combined_df['Date_Parsed'] = pd.to_datetime(combined_df['Date'], errors='coerce')
@@ -800,15 +821,27 @@ class DatabaseManager:
                 "sale_date": date_now
             })
             
-            # 2. Inventory Deduction (Smart Match) - REMOVED (Handled in main.py)
-            pass
+            # 2. Inventory Deduction (Smart Match)
+            if not inv_df.empty:
+                # Case-insensitive match
+                mask = inv_df['item_name'].astype(str).str.strip().str.lower() == str(item_name).strip().lower()
+                if mask.any():
+                    match_idx = inv_df.index[mask][0]
+                    curr_qty = float(inv_df.at[match_idx, 'quantity'])
+                    # Deduct net quantity (Sold - Returned)
+                    net_qty = qty - ret_qty
+                    inv_df.at[match_idx, 'quantity'] = curr_qty - net_qty
+                    inv_changed = True
+                    
+                    # Log movement
+                    self.log_inventory_change(inv_df.at[match_idx, 'id'], item_name, -net_qty, "Sale", invoice_id, f"Invoice #{invoice_id} to {customer_name}")
 
         if new_rows:
             new_sales_df = pd.DataFrame(new_rows)
             updated_sales = pd.concat([sales_df, new_sales_df], ignore_index=True)
             self._write_data("Sales", updated_sales)
             
-        if inv_changed: # This will always be False now, but keeping the structure.
+        if inv_changed:
             self._write_data("Inventory", inv_df)
             
         # 3. Ledger Update
@@ -818,7 +851,7 @@ class DatabaseManager:
              desc += f" (Inc. Freight/Misc)"
              
         # Debit = Receiver (Customer owes us) -> Positive Amount in Debit column
-        self.add_ledger_entry(customer_name, desc, grand_total, 0.0, datetime.now().date())
+        self.add_ledger_entry(customer_name, desc, grand_total, 0.0, datetime.now().date(), ref_no=invoice_id)
         
         return True
 
@@ -907,8 +940,7 @@ class DatabaseManager:
                 # Let's trust the columns exist.
             except:
                 continue
-                
-            # --- LOGIC BRANCHING ---
+                       # --- LOGIC BRANCHING ---
             
             # ALWAYS Record in Sales Table (History) - Including Cash
             # This ensures they appear in Invoice History and Reprint
@@ -930,11 +962,33 @@ class DatabaseManager:
                 "type": txn_type,
                 "discount": float(row.get('Discount', 0)),
                 "cash_received": cash_recv,
-                "discount": float(row.get('Discount', 0)),
-                "cash_received": cash_recv,
                 "cash_paid": cash_paid,
                 "description": description
             })
+
+            # --- INVENTORY UPDATE LOGIC ---
+            if item_name and not inv_df.empty:
+                # Case-insensitive match
+                mask = inv_df['item_name'].astype(str).str.strip().str.lower() == str(item_name).strip().lower()
+                if mask.any():
+                    match_idx = inv_df.index[mask][0]
+                    curr_qty = float(inv_df.at[match_idx, 'quantity'])
+                    
+                    change = 0
+                    if txn_type in ["Sale", "Sale / Item"]:
+                        change = -qty
+                    elif txn_type in ["Purchase", "Purchase / Item", "Buy Item / Product"]:
+                        change = qty
+                    elif txn_type in ["Sale Return", "Return"]:
+                        change = qty
+                    elif txn_type in ["Purchase Return", "Return Item"]:
+                        change = -qty
+                    
+                    if change != 0:
+                        inv_df.at[match_idx, 'quantity'] = curr_qty + change
+                        inv_changed = True
+                        # Log movement
+                        self.log_inventory_change(inv_df.at[match_idx, 'id'], item_name, change, txn_type, invoice_id, f"Batch {txn_type} (Inv#{invoice_id}) to {customer_name}")
             
             # 1. SALE
             if txn_type in ["Sale", "Sale / Item"]:
@@ -1130,20 +1184,30 @@ class DatabaseManager:
                 "purchase_date": date_now
             })
             
-            # 2. Inventory Addition - REMOVED (Handled in main.py)
-            pass
+            # 2. Inventory Addition (Smart Match)
+            if not inv_df.empty:
+                # Case-insensitive match
+                mask = inv_df['item_name'].astype(str).str.strip().str.lower() == str(item_name).strip().lower()
+                if mask.any():
+                    match_idx = inv_df.index[mask][0]
+                    curr_qty = float(inv_df.at[match_idx, 'quantity'])
+                    inv_df.at[match_idx, 'quantity'] = curr_qty + qty
+                    inv_changed = True
+                    
+                    # Log movement
+                    self.log_inventory_change(inv_df.at[match_idx, 'id'], item_name, qty, "Purchase", purchase_id, f"Purchase #{purchase_id} from {supplier_name}")
 
         if new_rows:
             new_purchases_df = pd.DataFrame(new_rows)
             updated_purchases = pd.concat([purchases_df, new_purchases_df], ignore_index=True)
             self._write_data("Purchases", updated_purchases)
             
-        if inv_changed: # This will always be False now, but keeping the structure.
+        if inv_changed:
             self._write_data("Inventory", inv_df)
             
         # 3. Ledger Update
         # Credit the Supplier (We owe them)
-        desc = "Batch Purchase"
+        desc = f"Purchase #{purchase_id}"
         # Ledger: Credit = Giver (Supplier gives us goods) -> Positive Amount in Credit column
         self.add_ledger_entry(supplier_name, desc, 0.0, grand_total, datetime.now().date(), ref_no=purchase_id)
         
@@ -1163,34 +1227,32 @@ class DatabaseManager:
         return pd.DataFrame()
 
     def get_invoice_total_from_ledger(self, invoice_id):
-        """Try to fetch the final billed amount from Ledger."""
+        """Try to fetch the final billed amount (Gross) from Ledger."""
         ledger = self._read_data("Ledger")
         if ledger.empty: return 0.0
         
-        # Look for description containing "#{invoice_id}"
-        # Handles "Inv #{id}" and "Ref #{id}"
-        matches = ledger[ledger['description'].astype(str).str.contains(f"#{invoice_id}", regex=False)]
-        
-        if not matches.empty:
-            # Calculate Net Impact (Debits - Credits)
-            # For Sales: Debits (Receivable). For Returns/Purchase: Credits.
-            debits = pd.to_numeric(matches['debit'], errors='coerce').fillna(0.0).sum()
-            credits = pd.to_numeric(matches['credit'], errors='coerce').fillna(0.0).sum()
-            return debits - credits
+        # Look for ref_no matching invoice_id
+        if 'ref_no' in ledger.columns:
+            matches = ledger[ledger['ref_no'].astype(str) == str(invoice_id)]
+            return pd.to_numeric(matches['debit'], errors='coerce').fillna(0.0).sum()
             
-        return 0.0
+        # Fallback if ref_no column missing (unlikely now)
+        matches = ledger[ledger['description'].astype(str).str.contains(f"#{invoice_id}", regex=False)]
+        return pd.to_numeric(matches['debit'], errors='coerce').fillna(0.0).sum()
 
     def get_cash_received_for_invoice(self, invoice_id):
         """Try to fetch the cash received amount specific to an invoice."""
         ledger = self._read_data("Ledger")
         if ledger.empty: return 0.0
         
-        # Look for description containing "Cash Payment for Inv #{invoice_id}"
-        matches = ledger[ledger['description'].astype(str).str.contains(f"Cash Payment for Inv #{invoice_id}", regex=False)]
-        
-        if not matches.empty:
+        # Look for ref_no matching invoice_id and having credit > 0
+        if 'ref_no' in ledger.columns:
+            matches = ledger[(ledger['ref_no'].astype(str) == str(invoice_id)) & (ledger['credit'] > 0)]
             return matches['credit'].sum()
-        return 0.0
+            
+        # Fallback for old data where ref_no was not set correctly
+        matches = ledger[ledger['description'].astype(str).str.contains(f"#{invoice_id}", regex=False)]
+        return matches['credit'].sum()
 
     # --- PURCHASE HISTORY HELPERS ---
     def get_purchase_items(self, purchase_id):
@@ -1416,7 +1478,7 @@ class DatabaseManager:
         return sorted(list(parties))
 
     # --- Employee Payroll Ledger Methods ---
-    def add_employee_ledger_entry(self, employee_name, date_val, entry_type, description, earned, paid):
+    def add_employee_ledger_entry(self, employee_name, date_val, entry_type, description, earned, paid, units=0):
         """
         Add an entry to the employee payroll ledger.
         
@@ -1427,9 +1489,10 @@ class DatabaseManager:
             description: Description of the transaction
             earned: Amount earned (credit to employee)
             paid: Amount paid to employee (debit from balance)
+            units: Number of units fixed (for work logs)
         """
         df = self._read_data("EmployeeLedger")
-        columns = ["id", "employee_name", "date", "type", "description", "earned", "paid"]
+        columns = ["id", "employee_name", "date", "type", "description", "earned", "paid", "units"]
         
         if df.empty:
             df = pd.DataFrame(columns=columns)
@@ -1447,7 +1510,8 @@ class DatabaseManager:
             "type": entry_type,
             "description": description,
             "earned": float(earned),
-            "paid": float(paid)
+            "paid": float(paid),
+            "units": int(units)
         }])
         
         updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -1529,10 +1593,12 @@ class DatabaseManager:
         for name, grp in df.groupby("employee_name"):
             earned = float(pd.to_numeric(grp["earned"], errors="coerce").fillna(0).sum())
             paid   = float(pd.to_numeric(grp["paid"],   errors="coerce").fillna(0).sum())
+            units  = int(pd.to_numeric(grp["units"],  errors="coerce").fillna(0).sum()) if "units" in grp.columns else 0
             summary[name] = {
                 "total_earned": earned,
                 "total_paid":   paid,
                 "balance":      earned - paid,
+                "total_units":  units,
             }
         return summary
 
