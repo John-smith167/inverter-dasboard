@@ -618,32 +618,57 @@ class DatabaseManager:
         # ---------- SOURCE 4: InventoryLogs (manual adjustments - fallback) ----------
         raw_logs = self.get_inventory_logs(item_id)
         logs_data = []
+        # Gather all references already covered (normalized)
         all_covered_refs = (
             covered_sale_refs | covered_purchase_refs |
-            {e['_source_ref'] for e in ledger_data_entries if e['_source_ref']}
+            {norm_ref(e['_source_ref']) for e in ledger_data_entries if e.get('_source_ref')}
         )
 
         for _, row in raw_logs.iterrows():
             ref = str(row.get('reference', ''))
+            n_ref = norm_ref(ref)
             reason = str(row.get('reason', ''))
             desc_log = str(row.get('description', ''))
-
-            # Skip if already captured by Sales / Purchases / Ledger
-            if ref and ref in all_covered_refs:
-                continue
-            # Skip rows whose reference is 'Invoice/Bill' — they are covered by the Ledger source above
-            # (these were logged by adjust_inventory_quantity from Partners & Ledger)
-            if ref in ('Invoice/Bill',):
-                # Only keep if NOT already present via Ledger entries (check by timestamp proximity is hard,
-                # so we skip duplicates conservatively here when Ledger source has entries)
-                if ledger_data_entries:
-                    continue
-
             qty_change = float(row.get('change', 0))
+            
             if qty_change == 0:
                 continue
 
-            # The reference field now stores the actual party name (after our fix)
+            # 1. Skip if already captured by Sales / Purchases / Ledger via direct reference
+            if ref and n_ref in all_covered_refs:
+                continue
+
+            # 2. Skip rows whose reference is 'Invoice/Bill' or that look like redundant ledger-driven adjustments
+            # (these were logged by adjust_inventory_quantity from Partners & Ledger or other automated paths)
+            is_auto_desc = "increase by" in desc_log.lower() or "decrease by" in desc_log.lower()
+            if ref in ('Invoice/Bill',) or is_auto_desc:
+                # If we have ledger/sales entries for this client/qty/date, skip the auto-log
+                # This catches cases where reference didn't match perfectly (e.g. party name vs invoice id)
+                match_exists = False
+                # Check Ledger
+                for le in ledger_data_entries:
+                    if (le['Client_Name'] == ref or le['Client_Name'] == n_ref or le['Client_Name'] in desc_log) and abs(le['Qty_Changed']) == abs(qty_change):
+                         # If date matches roughly (same day)
+                         le_date = str(le['Date'])[:10]
+                         log_date = str(row.get('timestamp'))[:10]
+                         if le_date == log_date:
+                             match_exists = True
+                             break
+                if match_exists:
+                    continue
+                
+                # Check Sales/Purchases if ledger didn't match
+                for s in (sales_data + purchases_data):
+                     if abs(s['Qty_Changed']) == abs(qty_change):
+                         s_date = str(s['Date'])[:10]
+                         log_date = str(row.get('timestamp'))[:10]
+                         if s_date == log_date:
+                             match_exists = True
+                             break
+                if match_exists:
+                    continue
+
+            # Fallback client name
             client = ref if (ref and ref not in ('Invoice/Bill', 'nan', '')) else "Admin"
 
             if qty_change > 0:
@@ -663,6 +688,7 @@ class DatabaseManager:
                 "Total_Amount": abs(qty_change) * rate,
                 "_source_ref": ref
             })
+
 
         # ---------- Combine all sources ----------
         all_data = sales_data + purchases_data + ledger_data_entries + logs_data
@@ -2075,7 +2101,7 @@ class DatabaseManager:
         # Return first match as dict
         return item.iloc[0].to_dict()
 
-    def adjust_inventory_quantity(self, item_name, delta_qty, party_name=""):
+    def adjust_inventory_quantity(self, item_name, delta_qty, party_name="", include_log=True):
         """
         Adjust quantity by delta_qty.
         delta_qty > 0 (Purchase/Stock In)
@@ -2097,18 +2123,20 @@ class DatabaseManager:
         self._write_data("Inventory", df)
         
         # Log it — use the actual party_name as reference so product ledger shows correct client
-        item_id = df.at[idx, 'id']
-        action = "Increase" if delta_qty > 0 else "Decrease"
-        # Use party_name as the reference (client name in product ledger); fallback to empty string
-        log_ref = party_name if party_name else ""
-        self.log_inventory_change(
-            item_id, item_name, delta_qty,
-            "Transaction",
-            log_ref, f"{action} by {abs(delta_qty)}"
-        )
+        if include_log:
+            item_id = df.at[idx, 'id']
+            action = "Increase" if delta_qty > 0 else "Decrease"
+            # Use party_name as the reference (client name in product ledger); fallback to empty string
+            log_ref = party_name if party_name else ""
+            self.log_inventory_change(
+                item_id, item_name, delta_qty,
+                "Transaction",
+                log_ref, f"{action} by {abs(delta_qty)}"
+            )
         return True, new_qty
 
     # --- Bank System Methods ---
+
 
     def add_bank_transaction(self, date_val, description, amount, txn_type, category="Other"):
         """

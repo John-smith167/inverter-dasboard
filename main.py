@@ -3795,7 +3795,7 @@ elif menu == "👥 Partners & Ledger":
                               delta = -q_curr # Decrease Stock
                               
                           if delta != 0:
-                              db.adjust_inventory_quantity(selected_item_name, delta, party_name=current_party)
+                              db.adjust_inventory_quantity(selected_item_name, delta, party_name=current_party, include_log=False)
                                
                       # Determine Debit/Credit based on Mode
                       if is_pur or is_sale_ret:
