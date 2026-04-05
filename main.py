@@ -2086,6 +2086,8 @@ def employee_payroll_dialog(emp_id, emp_name):
                         description += f" - {desc_input}"
                         
                     db.add_employee_ledger_entry(emp_name, p_date, p_type, description, 0.0, amount, units=0)
+                    # AUTO-RECORD BANK TRANSACTION
+                    db.add_bank_transaction(p_date, f"Staff Payment: {emp_name} ({description})", amount, "OUT", p_type)
                     st.toast(f"✅ Payment recorded! Paid: Rs. {amount:,.2f}", icon="✅")
                     st.success(f"✅ Payment recorded! Paid: Rs. {amount:,.2f}")
                     time.sleep(1)
@@ -3309,6 +3311,8 @@ elif menu == "📊 Business Reports":
               if st.form_submit_button("Record Expense"):
                    if e_desc and e_amt > 0:
                         db.add_expense(report_date, e_desc, e_amt, e_cat)
+                        # AUTO-RECORD BANK TRANSACTION
+                        db.add_bank_transaction(report_date, f"Shop Expense: {e_desc}", e_amt, "OUT", e_cat)
                         st.success("Expense Recorded!")
                         st.rerun()
                    else:
