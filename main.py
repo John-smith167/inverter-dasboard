@@ -2671,8 +2671,10 @@ if menu == "⚡ Quick Invoice":
              """, unsafe_allow_html=True)
              
         with fc2:
-             freight = st.number_input("Freight / Kiraya", min_value=0.0, step=50.0)
-             misc = st.number_input("Labor / Misc", min_value=0.0, step=50.0)
+             freight = st.number_input("Freight / Kiraya", min_value=0.0, step=50.0, value=None, placeholder="0")
+             freight = freight if freight is not None else 0.0
+             misc = st.number_input("Labor / Misc", min_value=0.0, step=50.0, value=None, placeholder="0")
+             misc = misc if misc is not None else 0.0
              
              # Determine direction of Extras
              # If Net Goods is Positive (Sale), Extras add to Receivable (Positive)
@@ -3280,6 +3282,42 @@ elif menu == "📦 Product Inventory":
 elif menu == "📊 Business Reports":
     st.title("📊 Business Reports & Analytics")
 
+    # --- TOP-LEVEL FINANCIAL SUMMARY CARDS ---
+    _recovery_top = db.get_customer_recovery_list()
+    if not _recovery_top.empty:
+        _grand_total_sales = _recovery_top['total_sales'].sum()
+        _grand_total_paid = _recovery_top['total_paid'].sum()
+        _adv_clients = _recovery_top[_recovery_top['net_outstanding'] < 0]
+        _grand_advance = abs(_adv_clients['net_outstanding'].sum()) if not _adv_clients.empty else 0.0
+        _owe_clients = _recovery_top[_recovery_top['net_outstanding'] > 0]
+        _grand_outstanding = _owe_clients['net_outstanding'].sum() if not _owe_clients.empty else 0.0
+        
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        with fc1:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #7aa2f7;">
+                <div class="sub-text">💰 Total Sales Amount</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#7aa2f7;">Rs. {_grand_total_sales:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        with fc2:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #9ece6a;">
+                <div class="sub-text">✅ Total Payment Received</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#9ece6a;">Rs. {_grand_total_paid:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        with fc3:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #e0af68;">
+                <div class="sub-text">🔄 Advance Given</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#e0af68;">Rs. {_grand_advance:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        with fc4:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #f7768e;">
+                <div class="sub-text">⚠️ Outstanding Balance</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#f7768e;">Rs. {_grand_outstanding:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        
+        st.write("")  # spacer
+    
+    st.divider()
+
     # --- SECTION A: DAILY CASH BOOK (Moved to Top) ---
     st.header("💵 Daily Cash Book")
     
@@ -3760,11 +3798,11 @@ elif menu == "👥 Partners & Ledger":
                        else:
                            selected_item_name = sel_prod_label
 
-                  q_curr = st.session_state.get(f"q_{current_party}", 0)
-                  r_curr = st.session_state.get(f"r_{current_party}", 0.0)
-                  disc_curr = st.session_state.get(f"disc_{current_party}", 0.0)
-                  bill_amt = st.session_state.get(f"bill_{current_party}", 0.0)
-                  cash_amt = st.session_state.get(f"cash_{current_party}", 0.0)
+                  q_curr = st.session_state.get(f"q_{current_party}", None) or 0
+                  r_curr = st.session_state.get(f"r_{current_party}", None) or 0.0
+                  disc_curr = st.session_state.get(f"disc_{current_party}", None) or 0.0
+                  bill_amt = st.session_state.get(f"bill_{current_party}", None) or 0.0
+                  cash_amt = st.session_state.get(f"cash_{current_party}", None) or 0.0
                   
                   entries_added = 0
                   
@@ -3859,18 +3897,18 @@ elif menu == "👥 Partners & Ledger":
 
              # Helper for auto-calculation
              def update_calc():
-                 q = st.session_state.get(f"q_{current_party}", 0)
-                 r = st.session_state.get(f"r_{current_party}", 0.0)
-                 disc = st.session_state.get(f"disc_{current_party}", 0.0)
+                 q = st.session_state.get(f"q_{current_party}", None) or 0
+                 r = st.session_state.get(f"r_{current_party}", None) or 0.0
+                 disc = st.session_state.get(f"disc_{current_party}", None) or 0.0
                  # Only update bill if q or r are positive
                  if q > 0 or r > 0:
                      st.session_state[f"bill_{current_party}"] = max(0.0, (q * r) - disc)
 
              # 1. Row 1: Qty & Rate & Discount
              c1, c2, c3 = st.columns(3)
-             c1.number_input("Quantity (Optional)", min_value=0.0, step=0.01, key=f"q_{current_party}", on_change=update_calc)
-             c2.number_input("Rate / Price per Item", min_value=0.0, step=0.01, key=f"r_{current_party}", on_change=update_calc)
-             c3.number_input("Discount", min_value=0.0, step=0.01, key=f"disc_{current_party}", on_change=update_calc)
+             c1.number_input("Quantity (Optional)", min_value=0.0, step=0.01, key=f"q_{current_party}", on_change=update_calc, value=None, placeholder="0")
+             c2.number_input("Rate / Price per Item", min_value=0.0, step=0.01, key=f"r_{current_party}", on_change=update_calc, value=None, placeholder="0")
+             c3.number_input("Discount", min_value=0.0, step=0.01, key=f"disc_{current_party}", on_change=update_calc, value=None, placeholder="0")
              
              # 2. Row 2: Bill & Cash
              c4, c5 = st.columns(2)
@@ -3890,8 +3928,8 @@ elif menu == "👥 Partners & Ledger":
                  lbl_bill = "Total Payable (Credit)" if is_purchase_txn else "Values for Total Bill (Debit)"
                  lbl_cash = "Cash Paid (Debit)" if is_purchase_txn else "Cash Received (Credit)"
              
-             c4.number_input(lbl_bill, min_value=0.0, step=0.01, key=f"bill_{current_party}")
-             c5.number_input(lbl_cash, min_value=0.0, step=0.01, key=f"cash_{current_party}")
+             c4.number_input(lbl_bill, min_value=0.0, step=0.01, key=f"bill_{current_party}", value=None, placeholder="0")
+             c5.number_input(lbl_cash, min_value=0.0, step=0.01, key=f"cash_{current_party}", value=None, placeholder="0")
 
              # 3. Row 3: Meta
              c6, c7, c8 = st.columns([1, 2, 1])
