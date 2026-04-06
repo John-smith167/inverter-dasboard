@@ -3717,6 +3717,42 @@ elif menu == "📊 Business Reports":
 # --- TAB: PARTNERS & LEDGER ---
 elif menu == "👥 Partners & Ledger":
     st.title("👥 Partners & Ledger")
+
+    # --- FINANCIAL SUMMARY CARDS ---
+    _led_recovery = db.get_customer_recovery_list()
+    if not _led_recovery.empty:
+        _ls = _led_recovery['total_sales'].sum()
+        _lp = _led_recovery['total_paid'].sum()
+        _la_df = _led_recovery[_led_recovery['net_outstanding'] < 0]
+        _la = abs(_la_df['net_outstanding'].sum()) if not _la_df.empty else 0.0
+        _lo_df = _led_recovery[_led_recovery['net_outstanding'] > 0]
+        _lo = _lo_df['net_outstanding'].sum() if not _lo_df.empty else 0.0
+
+        lfc1, lfc2, lfc3, lfc4 = st.columns(4)
+        with lfc1:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #7aa2f7;">
+                <div class="sub-text">💰 Total Sales Amount</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#7aa2f7;">Rs. {_ls:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        with lfc2:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #9ece6a;">
+                <div class="sub-text">✅ Total Payment Received</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#9ece6a;">Rs. {_lp:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        with lfc3:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #e0af68;">
+                <div class="sub-text">🔄 Advance Given</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#e0af68;">Rs. {_la:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+        with lfc4:
+            st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #f7768e;">
+                <div class="sub-text">⚠️ Outstanding Balance</div>
+                <div style="font-size:1.8rem; font-weight:bold; color:#f7768e;">Rs. {_lo:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+
+        st.write("")  # spacer
+    st.divider()
+
     
     # State management for view
     if 'ledger_view_party' not in st.session_state:
