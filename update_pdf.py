@@ -51,12 +51,12 @@ def update_main_py():
     
     pdf.set_y(35)
     pdf.set_font("Arial", 'B', 20)
-    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
+    pdf.cell(0, 8, txt="HQ Traders", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Suresh Kumar", ln=True, align='C')
-    pdf.cell(0, 5, txt="Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
+    pdf.cell(0, 5, txt="Shamshabad mohallah near ajmari Masjid Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Rana Hassan", ln=True, align='C')
+    pdf.cell(0, 5, txt="Mobile: 03078811132, 03162332860", ln=True, align='C')
     
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
