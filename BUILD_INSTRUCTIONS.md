@@ -1,52 +1,87 @@
-# SK INVERTX TRADERS - Build Instructions
+# SK INVERTX TRADERS — Build Instructions
 
-## Prerequisites
-1. Ensure Python and Streamlit are installed.
-2. Install PyInstaller: `pip install pyinstaller`.
-3. Ensure `inventory.db` exists in the project root.
-4. Ensure `assets` folder contains `logo.ico` and `logo.png`.
-5. Install dependencies: `pip install -r requirements.txt` (this installs `pyinstaller`).
+## ✅ Recommended: Build via GitHub Actions (Automatic)
 
-## Troubleshooting
-If `pip` or `pyinstaller` commands are not found, try using `python -m pip install ...` or `python -m PyInstaller ...`.
+This project is configured to automatically build a Windows installer every time
+you push to the `main` branch on GitHub.
 
-## Step 1: Build the Executable (PyInstaller)
+### How to trigger a build:
 
-Run the following command in your terminal (Windows Command Prompt or PowerShell):
+1. Push your code to GitHub:
+   ```bash
+   git add .
+   git commit -m "your message"
+   git push origin main
+   ```
+
+2. Go to your GitHub repository → **Actions** tab
+
+3. Click the latest **"Build Windows Installer"** run
+
+4. Wait ~5–10 minutes for it to finish
+
+5. Scroll down to **Artifacts** → download:
+   - `SK_INVERTX_TRADERS_EXE` → standalone `.exe`
+   - `SK_INVERTX_Installer` → full Windows installer (`.exe` setup wizard)
+
+> You can also trigger a build manually anytime via **Actions → Run workflow**.
+
+---
+
+## 🔧 Manual Build (Windows Only)
+
+> PyInstaller only builds for the OS it runs on. You must be on a Windows PC.
+
+### Prerequisites
+- Python 3.10
+- Run: `pip install -r requirements.txt`
+- Ensure `assets/logo.ico` and `inventory.db` exist
+
+### Step 1 — Build the EXE
 
 ```bash
-python -m PyInstaller --noconfirm --onefile --windowed --name "SK_INVERTX_TRADERS" --icon "assets/logo.ico" --add-data "main.py;." --add-data "inventory.db;." --add-data "assets;assets" --collect-all streamlit run_app.py
+python -m PyInstaller --noconfirm --onefile --windowed ^
+  --name "SK_INVERTX_TRADERS" ^
+  --icon "assets/logo.ico" ^
+  --add-data "main.py;." ^
+  --add-data "database.py;." ^
+  --add-data "inventory.db;." ^
+  --add-data "assets;assets" ^
+  --collect-all streamlit ^
+  run_app.py
 ```
 
-**Note for Mac/Linux Users:**
-If you are building *on* Mac/Linux *for* Mac/Linux, use `:` as a separator instead of `;`:
-```bash
-python3 -m PyInstaller --noconfirm --onefile --windowed --name "SK_INVERTX_TRADERS" --icon "assets/logo.ico" --add-data "main.py:." --add-data "inventory.db:." --add-data "assets:assets" --collect-all streamlit run_app.py
-```
+Output: `dist/SK_INVERTX_TRADERS.exe`
 
-To build for Windows from a Mac, you typically need to use a Windows environment (VM or Boot Camp) or Wine, as PyInstaller generally builds for the OS it is running on.
+### Step 2 — Build the Installer (Inno Setup)
 
-## Step 2: Create the Installer (Inno Setup)
+1. Download & install [Inno Setup](https://jrsoftware.org/isdl.php)
+2. Open `setup.iss` in Inno Setup
+3. Click **Build → Compile**
+4. Installer will be at: `Output/SK_INVERTX_Installer.exe`
 
-1. Download and Install [Inno Setup](https://jrsoftware.org/isdl.php).
-2. Open the `setup.iss` file generated in the project root.
-3. Verify the paths in the script, specifically:
-   - `Source: "dist\SK_INVERTX_TRADERS.exe"` (Ensure the built exe is here)
-   - `Source: "assets\logo.ico"`
-4. Click **Build > Compile**.
-5. The final setup file `SK_INVERTX_Installer.exe` will be created in the `Output` directory (default: `Output` folder inside project root).
+---
 
-## Folder Structure
-Ensure your project looks like this before building:
+## 📁 Required Project Structure
+
 ```
 /ProjectRoot
   ├── run_app.py
   ├── main.py
   ├── database.py
   ├── inventory.db
-  ├── assets/
-  │   ├── logo.png
-  │   └── logo.ico
+  ├── requirements.txt
   ├── setup.iss
-  └── ...
+  ├── SK_INVERTX_TRADERS.spec
+  └── assets/
+      ├── logo.png
+      └── logo.ico
 ```
+
+---
+
+## 💾 How Data is Stored
+
+- On first launch, `inventory.db` is copied to the user's install directory
+- All data is stored **100% locally** on the Windows machine (SQLite)
+- Data persists between sessions and app updates

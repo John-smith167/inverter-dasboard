@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('main.py', '.'), ('inventory.db', '.'), ('assets', 'assets')]
+datas = [('main.py', '.'), ('database.py', '.'), ('inventory.db', '.'), ('assets', 'assets')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('streamlit')

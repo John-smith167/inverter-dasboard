@@ -1,4 +1,4 @@
-name: Build Windows Executable
+name: Build Windows Installer
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -22,23 +22,36 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+          pip install -r requirements.txt
           pip install pyinstaller
 
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --name SK_INVERTX_TRADERS --onefile --windowed --icon=assets/logo.ico --add-data "inventory.db;." --add-data "assets;assets" run_app.py
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "SK_INVERTX_TRADERS" `
+            --icon "assets/logo.ico" `
+            --add-data "main.py;." `
+            --add-data "database.py;." `
+            --add-data "inventory.db;." `
+            --add-data "assets;assets" `
+            --collect-all streamlit `
+            run_app.py
 
-      - name: Compile Inno Setup Script
+      - name: Install Inno Setup
+        run: choco install innosetup --yes
+
+      - name: Compile Installer with Inno Setup
         run: |
-          choco install innosetup
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss
-        continue-on-error: true
 
-      - name: Upload Artifacts
+      - name: Upload EXE Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SK_INVERTX_TRADERS_Windows
-          path: |
-            dist/SK_INVERTX_TRADERS.exe
-            Output/SK_INVERTX_Installer.exe
+          name: SK_INVERTX_TRADERS_EXE
+          path: dist/SK_INVERTX_TRADERS.exe
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SK_INVERTX_Installer
+          path: Output/SK_INVERTX_Installer.exe
