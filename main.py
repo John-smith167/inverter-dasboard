@@ -64,11 +64,11 @@ def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, 
     # --- HEADER (Professional Style) ---
     pdf.set_font("Arial", 'B', 20)
     pdf.set_y(10)
-    pdf.cell(0, 8, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Shamshabad mohallah near ajmari Masjid Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Rana Hassan | Mobile: 03078811132, 03162332860", ln=True, align='C')
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     if os.path.exists("assets/logo.png"):
         pdf.image("assets/logo.png", 10, 8, 30)
@@ -240,11 +240,11 @@ def create_ledger_pdf(party_name, ledger_df, final_balance, is_filtered=False, p
         pdf.image("assets/logo.png", 10, 8, 33)
     
     pdf.set_y(10)
-    pdf.cell(0, 10, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Shamshabad mohallah near ajmari Masjid Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Rana Hassan | Mobile: 03078811132, 03162332860", ln=True, align='C')
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     pdf.ln(5)
     
@@ -570,11 +570,11 @@ def create_employee_payroll_pdf(employee_name, ledger_df, final_balance):
         pdf.image("assets/logo.png", 88.5, 8, 33)
         pdf.set_y(35)
 
-    pdf.cell(0, 8, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Shamshabad mohallah near ajmari Masjid Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Rana Hassan | Mobile: 03078811132, 03162332860", ln=True, align='C')
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
@@ -713,11 +713,11 @@ def create_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freig
         pdf.image("assets/logo.png", 10, 8, 33)
     
     pdf.set_y(10)
-    pdf.cell(0, 10, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Shamshabad mohallah near ajmari Masjid Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Rana Hassan | Mobile: 03078811132, 03162332860", ln=True, align='C')
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     pdf.ln(5)
     
@@ -1340,11 +1340,11 @@ def create_stock_valuation_pdf(stock_df):
         pdf.image("assets/logo.png", 10, 8, 33)
         
     pdf.set_y(10)
-    pdf.cell(0, 8, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Shamshabad mohallah near ajmari Masjid Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Rana Hassan | Mobile: 03078811132, 03162332860", ln=True, align='C')
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     pdf.ln(5)
     
@@ -1411,7 +1411,7 @@ def create_recovery_list_pdf(recovery_df, grand_total):
         pdf.image("assets/logo.png", 10, 8, 33)
         
     pdf.set_y(15)
-    pdf.cell(0, 10, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 8, txt="Customer Recovery List", ln=True, align='C')
     pdf.set_font("Arial", size=10)
@@ -1550,7 +1550,7 @@ def create_inventory_ledger_pdf(item_name, item_history):
         pdf.image("assets/logo.png", 10, 8, 33)
         
     pdf.set_y(15)
-    pdf.cell(0, 10, txt="HQ Traders", ln=True, align='C')
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 8, txt="Product Stock Ledger", ln=True, align='C')
     pdf.set_font("Arial", 'B', 10)
@@ -1608,7 +1608,7 @@ def create_inventory_ledger_pdf(item_name, item_history):
 
 
 # Page Config
-st.set_page_config(page_title="HQ Traders", layout="wide", page_icon="assets/logo.png", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SK INVERTX TRADERS", layout="wide", page_icon="assets/logo.png", initial_sidebar_state="expanded")
 
 # --- INTERACTIVE DIALOGS ---
 @st.dialog("Repair Job Manager")
@@ -1855,7 +1855,7 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
         clean_phone = "92" + clean_phone[1:]
     
     # Message
-    msg_text = f"Assalam-o-Alaikum {client_name}! Your Inverter ({model}) is ready. Total Bill: Rs. {total_bill_val}. Please collect before 8 PM. - HQ Traders"
+    msg_text = f"Assalam-o-Alaikum {client_name}! Your Inverter ({model}) is ready. Total Bill: Rs. {total_bill_val}. Please collect before 8 PM. - SK INVERTX TRADERS"
     encoded_msg = urllib.parse.quote(msg_text)
     
     # URL
@@ -2214,7 +2214,7 @@ with st.sidebar:
     else:
         st.image("https://cdn-icons-png.flaticon.com/512/3665/3665922.png", width=50) # Fallback
         
-    st.markdown("### HQ Traders")
+    st.markdown("### SK INVERTX TRADERS")
     st.caption("v4.6 FIXED")
     st.markdown("---")
     
