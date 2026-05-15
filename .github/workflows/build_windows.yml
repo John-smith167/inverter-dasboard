@@ -27,13 +27,17 @@ jobs:
 
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed `
+          pyinstaller --noconfirm --onefile --console `
             --name "SK_INVERTX_TRADERS" `
             --icon "assets/logo.ico" `
             --add-data "main.py;." `
             --add-data "database.py;." `
             --add-data "inventory.db;." `
             --add-data "assets;assets" `
+            --hidden-import threading `
+            --hidden-import socket `
+            --hidden-import webbrowser `
+            --hidden-import urllib.request `
             --collect-all streamlit `
             run_app.py
 
