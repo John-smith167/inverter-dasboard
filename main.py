@@ -16,9 +16,12 @@ import shutil
 import os
 
 def secure_startup():
-    # Ensure Backup Folder Exists
-    if not os.path.exists("Data_Backups"):
-        os.makedirs("Data_Backups")
+    # Ensure Backup Folder Exists (writable location guaranteed by run_app.py)
+    try:
+        if not os.path.exists("Data_Backups"):
+            os.makedirs("Data_Backups")
+    except PermissionError:
+        pass  # run_app.py already created this in AppData; silently continue
     
     # Create Timestamped Backup
     if os.path.exists("inventory.db"):
@@ -37,6 +40,7 @@ def secure_startup():
                 os.remove(old_backup)
             except:
                 pass
+
 
 # Run Secure Startup Logic
 secure_startup()

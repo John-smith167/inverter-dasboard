@@ -19,25 +19,28 @@ import json
 
 def resolve_path(path):
     """
-    Get the absolute path to a bundled resource.
-    Works for both normal Python and PyInstaller frozen executables.
-    _MEIPASS is the temp folder PyInstaller extracts bundled files into.
+    Get the absolute path to a BUNDLED (read-only) resource inside the .exe.
+    PyInstaller extracts bundled files to _MEIPASS (a temp folder).
     """
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, path)
     return os.path.join(os.path.abspath("."), path)
 
 
-def get_install_dir():
+def get_user_data_dir():
     """
-    Returns the directory where the .exe lives (install folder).
-    This is where persistent data (inventory.db, assets) should be stored.
+    Returns a WRITABLE user data directory.
+
+    C:\\Program Files\\ is READ-ONLY for normal users on Windows.
+    We store all app data (database, backups, assets) in:
+        C:\\Users\\{username}\\AppData\\Roaming\\SK_INVERTX_TRADERS\\
+
+    This folder is always writable — no admin rights needed.
     """
-    if hasattr(sys, '_MEIPASS'):
-        # Frozen: sys.executable = path to the .exe
-        return os.path.dirname(sys.executable)
-    # Dev mode: current working directory
-    return os.path.abspath(".")
+    appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+    user_data_dir = os.path.join(appdata, 'SK_INVERTX_TRADERS')
+    os.makedirs(user_data_dir, exist_ok=True)
+    return user_data_dir
 
 
 def find_free_port():
@@ -48,10 +51,9 @@ def find_free_port():
         return s.getsockname()[1]
 
 
-def open_browser_when_ready(port, retries=20):
+def open_browser_when_ready(port, retries=30):
     """
     Polls until Streamlit is accepting connections, then opens the browser.
-    This avoids opening the browser before the server is ready.
     """
     url = f"http://localhost:{port}"
     for _ in range(retries):
@@ -63,51 +65,68 @@ def open_browser_when_ready(port, retries=20):
             return
         except Exception:
             continue
-    # Fallback: open after 15 seconds regardless
+    # Fallback: open after waiting regardless
     webbrowser.open(url)
 
 
 if __name__ == "__main__":
 
     # ----------------------------------------------------------------
-    # 1. Set working directory to the install folder so that
-    #    relative paths like "inventory.db" and "assets/logo.png"
-    #    work correctly from the installed .exe location.
+    # 1. Set working directory to WRITABLE user data folder.
+    #
+    #    C:\Program Files\ is read-only. All file operations in main.py
+    #    use RELATIVE paths (e.g. "inventory.db", "Data_Backups/", "assets/")
+    #    so they land wherever the current working directory is.
+    #    We point that to AppData\Roaming\SK_INVERTX_TRADERS\ which is
+    #    always writable without admin rights.
     # ----------------------------------------------------------------
-    install_dir = get_install_dir()
-    os.chdir(install_dir)
+    user_data_dir = get_user_data_dir()
+    os.chdir(user_data_dir)
+
+    print(f"[SK INVERTX] Data directory: {user_data_dir}")
 
     # ----------------------------------------------------------------
     # 2. Setup Persistent Database
-    #    Copy the bundled blank DB to install folder on first run only.
-    #    After that, the user's real data lives here permanently.
+    #    Copy the bundled blank DB to user data folder on first run only.
     # ----------------------------------------------------------------
-    target_db = os.path.join(install_dir, "inventory.db")
+    target_db = os.path.join(user_data_dir, "inventory.db")
     if not os.path.exists(target_db):
         bundled_db = resolve_path("inventory.db")
         if os.path.exists(bundled_db):
             try:
                 shutil.copy(bundled_db, target_db)
+                print(f"[SK INVERTX] Database initialized at: {target_db}")
             except Exception as e:
                 print(f"[SK INVERTX] Error initializing database: {e}")
+        else:
+            print("[SK INVERTX] Warning: No bundled inventory.db found.")
 
     # ----------------------------------------------------------------
     # 3. Setup Assets Folder
-    #    Copy bundled assets (logo etc.) to install folder on first run.
+    #    Copy bundled assets (logo, icons) to user data folder on first run.
     # ----------------------------------------------------------------
-    target_assets = os.path.join(install_dir, "assets")
+    target_assets = os.path.join(user_data_dir, "assets")
     if not os.path.exists(target_assets):
         bundled_assets = resolve_path("assets")
         if os.path.exists(bundled_assets):
             try:
                 shutil.copytree(bundled_assets, target_assets)
+                print(f"[SK INVERTX] Assets initialized at: {target_assets}")
             except Exception as e:
                 print(f"[SK INVERTX] Error initializing assets: {e}")
 
     # ----------------------------------------------------------------
-    # 4. Find a free port and launch browser automatically
+    # 4. Pre-create Data_Backups folder (main.py tries to create this
+    #    on startup — ensure it exists in our writable data dir)
+    # ----------------------------------------------------------------
+    backups_dir = os.path.join(user_data_dir, "Data_Backups")
+    os.makedirs(backups_dir, exist_ok=True)
+
+    # ----------------------------------------------------------------
+    # 5. Find a free port and open browser automatically
     # ----------------------------------------------------------------
     port = find_free_port()
+    print(f"[SK INVERTX] Starting on http://localhost:{port}")
 
     browser_thread = threading.Thread(
         target=open_browser_when_ready,
@@ -117,7 +136,7 @@ if __name__ == "__main__":
     browser_thread.start()
 
     # ----------------------------------------------------------------
-    # 5. Launch Streamlit
+    # 6. Launch Streamlit pointing at the bundled main.py
     # ----------------------------------------------------------------
     main_app_path = resolve_path("main.py")
 
@@ -126,7 +145,7 @@ if __name__ == "__main__":
         "run",
         main_app_path,
         f"--server.port={port}",
-        "--server.headless=true",          # Don't let Streamlit try to open browser itself
+        "--server.headless=true",
         "--global.developmentMode=false",
         "--browser.gatherUsageStats=false",
         "--server.enableCORS=false",
