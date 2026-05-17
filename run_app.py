@@ -150,6 +150,11 @@ if __name__ == "__main__":
         "--browser.gatherUsageStats=false",
         "--server.enableCORS=false",
         "--server.enableXsrfProtection=false",
+        "--theme.base=dark",
+        "--theme.primaryColor=#f7768e",
+        "--theme.backgroundColor=#0e1117",
+        "--theme.secondaryBackgroundColor=#1a1c24",
+        "--theme.textColor=#ffffff",
     ]
 
     sys.exit(stcli.main())
