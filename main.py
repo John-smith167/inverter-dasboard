@@ -3473,6 +3473,68 @@ elif menu == "📊 Business Reports":
     else:
         st.info("No bank transactions recorded yet. Use the forms above to get started.")
 
+    # --- MANAGE BANK TRANSACTIONS ---
+    st.markdown("")
+    with st.expander("🗑️ Manage Bank Transactions", expanded=False):
+        st.warning("⚠️ Use this section to delete specific transactions or fully reset the bank system. These actions **cannot be undone**.")
+
+        # --- Sub-section 1: Delete a Specific Transaction ---
+        st.markdown("#### 🔍 Delete a Specific Transaction")
+
+        all_txns_mgmt = db.get_bank_transactions()  # Fetch all (no date filter) for management
+
+        if not all_txns_mgmt.empty:
+            # Build human-readable labels for the dropdown
+            def _txn_label(row):
+                direction = "⬆️ IN" if row['txn_type'] == "IN" else "⬇️ OUT"
+                return f"#{int(row['id'])} | {row['date']} | {direction} | Rs. {float(row['amount']):,.0f} | {row['description'][:40]}"
+
+            txn_options = {"Select a transaction...": None}
+            for _, r in all_txns_mgmt.iterrows():
+                txn_options[_txn_label(r)] = int(r['id'])
+
+            selected_label = st.selectbox(
+                "Select Transaction to Delete",
+                options=list(txn_options.keys()),
+                key="bank_del_select"
+            )
+
+            selected_txn_id = txn_options.get(selected_label)
+
+            if selected_txn_id is not None:
+                col_del_btn, col_del_info = st.columns([1, 3])
+                with col_del_btn:
+                    if st.button(f"🗑️ Delete Transaction #{selected_txn_id}", type="primary", key="bank_del_btn"):
+                        db.delete_bank_transaction(selected_txn_id)
+                        st.success(f"Transaction #{selected_txn_id} deleted successfully!")
+                        time.sleep(0.8)
+                        st.rerun()
+                with col_del_info:
+                    st.caption("This removes only this single entry from the bank system. All other data (Ledger, Sales, etc.) remains unchanged.")
+        else:
+            st.info("No bank transactions to manage.")
+
+        st.markdown("---")
+
+        # --- Sub-section 2: Reset Entire Bank System ---
+        st.markdown("#### 🔴 Reset Entire Bank System")
+        st.error("**Danger Zone:** This will permanently delete ALL bank transactions and reset Total In, Total Out, and Balance to Rs. 0. Customer ledger, sales, and all other data will remain completely unaffected.")
+
+        confirm_reset = st.checkbox(
+            "✅ I understand this will erase ALL bank transaction history and cannot be undone.",
+            key="bank_reset_confirm"
+        )
+
+        if confirm_reset:
+            if st.button("🔴 Reset Bank System Now", type="primary", key="bank_reset_btn"):
+                db.reset_bank_transactions()
+                st.success("✅ Bank system has been reset. All transactions cleared.")
+                time.sleep(1.0)
+                st.rerun()
+        else:
+            st.button("🔴 Reset Bank System Now", type="primary", key="bank_reset_btn_disabled", disabled=True)
+            st.caption("Check the confirmation box above to enable the reset button.")
+
     st.divider()
 
 

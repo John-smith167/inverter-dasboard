@@ -2196,3 +2196,22 @@ class DatabaseManager:
         balance   = total_in - total_out
 
         return float(total_in), float(total_out), float(balance)
+
+    def delete_bank_transaction(self, txn_id):
+        """
+        Deletes a single bank transaction by its ID.
+        Does not affect any other data (Ledger, Sales, Inventory, etc.).
+        """
+        df = self._read_data("BankTransactions")
+        if not df.empty:
+            df = df[df['id'] != txn_id]
+            self._write_data("BankTransactions", df)
+
+    def reset_bank_transactions(self):
+        """
+        Permanently deletes ALL bank transactions, resetting the bank system
+        to zero (Total In = 0, Total Out = 0, Balance = 0).
+        Does not affect any other data (Ledger, Sales, Inventory, etc.).
+        """
+        empty_df = pd.DataFrame(columns=["id", "date", "description", "amount", "txn_type", "category"])
+        self._write_data("BankTransactions", empty_df)
